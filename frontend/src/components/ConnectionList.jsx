@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   List,
   ListItem,
@@ -9,13 +9,72 @@ import {
   Typography,
   Box,
   Chip,
+  CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { loadConnections } from '../utils/storage';
+import { introspectConnection } from '../services/api';
 
 const ConnectionList = ({ currentConnection, onSelect, onDelete }) => {
-  const connections = loadConnections();
+  const [connections, setConnections] = useState([]);
+  const [reconnecting, setReconnecting] = useState(null);
+
+  // Load connections and set up to reload when storage changes
+  useEffect(() => {
+    const loadAndSetConnections = () => {
+      setConnections(loadConnections());
+    };
+
+    // Initial load
+    loadAndSetConnections();
+
+    // Listen for storage changes (e.g., from another tab or after delete)
+    window.addEventListener('storage', loadAndSetConnections);
+    
+    // Also set up a custom event for same-tab updates
+    window.addEventListener('connectionsChanged', loadAndSetConnections);
+
+    return () => {
+      window.removeEventListener('storage', loadAndSetConnections);
+      window.removeEventListener('connectionsChanged', loadAndSetConnections);
+    };
+  }, []);
+
+  // Wrap onDelete to trigger reload
+  const handleDelete = (connectionId) => {
+    onDelete(connectionId);
+    // Reload connections after delete
+    setConnections(loadConnections());
+    // Dispatch event for other components
+    window.dispatchEvent(new Event('connectionsChanged'));
+  };
+
+  // Handle reconnection with introspection
+  const handleReconnect = async (e, conn) => {
+    e.stopPropagation(); // Prevent selection while reconnecting
+    setReconnecting(conn.id);
+    
+    try {
+      await introspectConnection(conn.id, {
+        host: conn.host,
+        port: parseInt(conn.port, 10),
+        database: conn.database,
+        user: conn.user,
+        password: conn.password,
+      });
+      
+      // Select the connection after successful introspection
+      onSelect(conn);
+    } catch (error) {
+      console.error('Reconnection failed:', error);
+      alert(`Failed to reconnect: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setReconnecting(null);
+    }
+  };
 
   if (connections.length === 0) {
     return (
@@ -38,13 +97,30 @@ const ConnectionList = ({ currentConnection, onSelect, onDelete }) => {
           <ListItem
             key={conn.id}
             secondaryAction={
-              <IconButton 
-                edge="end" 
-                aria-label="delete"
-                onClick={() => onDelete(conn.id)}
-              >
-                <DeleteIcon />
-              </IconButton>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Tooltip title="Reconnect & Re-introspect">
+                  <IconButton
+                    edge="end"
+                    aria-label="reconnect"
+                    onClick={(e) => handleReconnect(e, conn)}
+                    disabled={reconnecting === conn.id}
+                  >
+                    {reconnecting === conn.id ? (
+                      <CircularProgress size={24} />
+                    ) : (
+                      <RefreshIcon />
+                    )}
+                  </IconButton>
+                </Tooltip>
+                <IconButton 
+                  edge="end" 
+                  aria-label="delete"
+                  onClick={() => handleDelete(conn.id)}
+                  disabled={reconnecting === conn.id}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </Box>
             }
             disablePadding
           >
