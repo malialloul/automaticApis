@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "test": "npm run build"
+    "test": "echo 'Running build test...' && npm run build"
   },
   "dependencies": {
     "react": "^18.2.0",

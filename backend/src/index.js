@@ -21,38 +21,36 @@ app.get('/health', (req, res) => {
 // Connection management endpoints
 app.use('/api/connections', connectionsRouter);
 
-// Dynamic API routes middleware
-// This intercepts /api/:connectionId/:table requests and routes to the appropriate API router
-app.use('/api/:connectionId', (req, res, next) => {
-  const connectionId = req.params.connectionId;
-  
-  // Skip if this is a connections route
-  if (connectionId === 'connections') {
-    return next();
-  }
+  // Dynamic API routes middleware
+  // This intercepts /api/:connectionId/:table requests and routes to the appropriate API router
+  app.use('/api/:connectionId', (req, res, next) => {
+    const connectionId = req.params.connectionId;
+    
+    // Skip if this is a connections route
+    if (connectionId === 'connections') {
+      return next();
+    }
 
-  const apiRouter = apiRouters.get(connectionId);
-  
-  if (!apiRouter) {
-    return res.status(404).json({ 
-      error: `No API found for connection '${connectionId}'. Please introspect the database first.` 
-    });
-  }
+    const apiRouter = apiRouters.get(connectionId);
+    
+    if (!apiRouter) {
+      return res.status(404).json({ 
+        error: `No API found for connection '${connectionId}'. Please introspect the database first.` 
+      });
+    }
 
-  // Remove the connectionId from the path and pass to the API router
-  const originalUrl = req.url;
-  req.url = req.url.replace(`/${connectionId}`, `/${connectionId}`);
-  
-  apiRouter(req, res, next);
-});
+    // Pass to the API router
+    apiRouter(req, res, next);
+  });
 
 // Swagger UI for specific connection
 app.get('/api-docs/:connectionId', async (req, res) => {
   const connectionId = req.params.connectionId;
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
   
   try {
     // Fetch the swagger spec
-    const response = await fetch(`http://localhost:${PORT}/api/connections/${connectionId}/swagger`);
+    const response = await fetch(`${baseUrl}/api/connections/${connectionId}/swagger`);
     
     if (!response.ok) {
       return res.status(404).send('Swagger documentation not available. Please introspect the database first.');
