@@ -30,6 +30,8 @@ class APIGenerator {
    * @param {object} tableSchema - Table schema
    */
   generateTableRoutes(tableName, tableSchema) {
+    // Note: basePath doesn't include connectionId because the middleware in index.js line 26
+    // (app.use('/api/:connectionId')) strips '/api/:connectionId' before passing to this router
     const basePath = `/${tableName}`;
 
     // GET /api/:connection/:table - List all with filters
