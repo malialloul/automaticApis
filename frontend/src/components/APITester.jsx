@@ -11,7 +11,7 @@ import {
   Divider,
   CircularProgress,
 } from '@mui/material';
-import ReactJson from 'react-json-view';
+import ReactJson from '@microlink/react-json-view';
 import { getSchema } from '../services/api';
 import api from '../services/api';
 

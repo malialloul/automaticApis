@@ -124,7 +124,7 @@ const SchemaVisualizer = ({ connectionId }) => {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableRow>Column</TableRow>
+                    <TableCell>Column</TableCell>
                     <TableCell>Type</TableCell>
                     <TableCell>Nullable</TableCell>
                     <TableCell>Default</TableCell>

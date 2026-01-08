@@ -22,7 +22,7 @@
     "@mui/icons-material": "^5.14.19",
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
-    "react-json-view": "^1.21.3",
+    "@microlink/react-json-view": "^1.23.0",
     "reactflow": "^11.10.1",
     "swagger-ui-react": "^5.10.0"
   },
