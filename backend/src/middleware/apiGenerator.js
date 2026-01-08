@@ -30,7 +30,7 @@ class APIGenerator {
    * @param {object} tableSchema - Table schema
    */
   generateTableRoutes(tableName, tableSchema) {
-    const basePath = `/${this.connectionId}/${tableName}`;
+    const basePath = `/${tableName}`;
 
     // GET /api/:connection/:table - List all with filters
     this.router.get(basePath, async (req, res) => {
