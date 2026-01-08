@@ -220,10 +220,28 @@ class QueryBuilder {
    * @returns {string} Sanitized identifier
    */
   sanitizeIdentifier(identifier) {
-    // Only allow alphanumeric and underscore
+    // PostgreSQL reserved words to reject
+    const reservedWords = new Set([
+      'select', 'insert', 'update', 'delete', 'drop', 'create', 'alter', 'table',
+      'database', 'schema', 'user', 'role', 'grant', 'revoke', 'union', 'where',
+      'from', 'join', 'order', 'group', 'having', 'limit', 'offset', 'and', 'or', 'not'
+    ]);
+    
+    // Only allow alphanumeric and underscore, must start with letter or underscore
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier)) {
       throw new Error(`Invalid identifier: ${identifier}`);
     }
+    
+    // Reject reserved words
+    if (reservedWords.has(identifier.toLowerCase())) {
+      throw new Error(`Cannot use reserved word as identifier: ${identifier}`);
+    }
+    
+    // Reject PostgreSQL system tables/schemas
+    if (identifier.toLowerCase().startsWith('pg_') || identifier.toLowerCase().startsWith('information_schema')) {
+      throw new Error(`Cannot access system tables: ${identifier}`);
+    }
+    
     return `"${identifier}"`;
   }
 }

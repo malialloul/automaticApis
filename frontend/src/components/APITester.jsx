@@ -53,6 +53,18 @@ const APITester = ({ connectionId }) => {
     setResponse(null);
 
     try {
+      // Validate JSON for POST/PUT requests
+      let parsedBody = null;
+      if ((operation === 'POST' || operation === 'PUT') && requestBody) {
+        try {
+          parsedBody = JSON.parse(requestBody);
+        } catch (jsonError) {
+          setError('Invalid JSON in request body. Please check your syntax.');
+          setLoading(false);
+          return;
+        }
+      }
+
       let url = `/${connectionId}/${selectedTable}`;
       
       if (recordId && (operation === 'GET' || operation === 'PUT' || operation === 'DELETE')) {
@@ -71,10 +83,10 @@ const APITester = ({ connectionId }) => {
           result = await api.get(url);
           break;
         case 'POST':
-          result = await api.post(url, JSON.parse(requestBody));
+          result = await api.post(url, parsedBody);
           break;
         case 'PUT':
-          result = await api.put(url, JSON.parse(requestBody));
+          result = await api.put(url, parsedBody);
           break;
         case 'DELETE':
           result = await api.delete(url);
