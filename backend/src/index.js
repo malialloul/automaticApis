@@ -4,6 +4,8 @@ const cors = require('cors');
 const morgan = require('morgan');
 const swaggerUi = require('swagger-ui-express');
 const { router: connectionsRouter, apiRouters } = require('./routes/connections');
+const authRouter = require('./routes/auth');
+const plansRouter = require('./routes/plans');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,6 +19,10 @@ app.use(morgan('dev'));
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Auth endpoints
+app.use('/api/auth', authRouter);
+app.use('/api/plans', plansRouter);
 
 // Connection management endpoints
 app.use('/api/connections', connectionsRouter);
@@ -39,7 +45,11 @@ app.use('/api/connections', connectionsRouter);
       });
     }
 
-    // Pass to the API router
+    // Pass to the API router, trimming the mount path so routes like '/:table' match
+    const prefix = `/api/${connectionId}`;
+    if (req.url.startsWith(prefix)) {
+      req.url = req.url.slice(prefix.length) || '/';
+    }
     apiRouter(req, res, next);
   });
 
