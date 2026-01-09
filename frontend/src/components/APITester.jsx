@@ -10,10 +10,13 @@ import {
   Alert,
   Divider,
   CircularProgress,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import ReactJson from '@microlink/react-json-view';
 import { getSchema } from '../services/api';
 import api from '../services/api';
+import CodeSnippet from './CodeSnippet';
 
 const APITester = ({ connectionId }) => {
   const [schema, setSchema] = useState(null);
@@ -25,10 +28,11 @@ const APITester = ({ connectionId }) => {
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState(0); // 0 = Test API, 1 = Get Code
 
   useEffect(() => {
     const loadSchema = async () => {
-      if (!connectionId) return;
+      if (! connectionId) return;
       try {
         const data = await getSchema(connectionId);
         setSchema(data);
@@ -59,12 +63,11 @@ const APITester = ({ connectionId }) => {
         try {
           parsedBody = JSON.parse(requestBody);
         } catch (jsonError) {
-          setError('Invalid JSON in request body. Please check your syntax.');
+          setError('Invalid JSON in request body.  Please check your syntax.');
           setLoading(false);
           return;
         }
       }
-
       let url = `/${connectionId}/${selectedTable}`;
       
       if (recordId && (operation === 'GET' || operation === 'PUT' || operation === 'DELETE')) {
@@ -83,7 +86,7 @@ const APITester = ({ connectionId }) => {
           result = await api.get(url);
           break;
         case 'POST':
-          result = await api.post(url, parsedBody);
+          result = await api. post(url, parsedBody);
           break;
         case 'PUT':
           result = await api.put(url, parsedBody);
@@ -91,14 +94,14 @@ const APITester = ({ connectionId }) => {
         case 'DELETE':
           result = await api.delete(url);
           break;
-        default:
+        default: 
           throw new Error('Invalid operation');
       }
 
       const endTime = Date.now();
 
       setResponse({
-        status: result.status,
+        status: result. status,
         statusText: result.statusText,
         headers: result.headers,
         data: result.data,
@@ -118,6 +121,57 @@ const APITester = ({ connectionId }) => {
     }
   };
 
+  // Prepare endpoint info for code generation
+  const getCurrentEndpoint = () => {
+    let path = `/${connectionId}/${selectedTable}`;
+    if (recordId && operation !== 'POST') {
+      path += '/: id';
+    }
+
+    return {
+      path,
+      method:  operation,
+      description: `${operation} ${selectedTable}`,
+    };
+  };
+
+  const getCodeOptions = () => {
+    const baseUrl = api.defaults?. baseURL || 'http://localhost:3001/api';
+    const params = {};
+    
+    // Parse query params
+    if (queryParams) {
+      const pairs = queryParams.split('&');
+      pairs.forEach(pair => {
+        const [key, value] = pair.split('=');
+        if (key && value) {
+          params[key] = value;
+        }
+      });
+    }
+
+    const pathParams = {};
+    if (recordId) {
+      pathParams.id = recordId;
+    }
+
+    let body = null;
+    if ((operation === 'POST' || operation === 'PUT') && requestBody) {
+      try {
+        body = JSON.parse(requestBody);
+      } catch (e) {
+        body = {};
+      }
+    }
+
+    return {
+      baseUrl,
+      params,
+      pathParams,
+      body,
+    };
+  };
+
   if (!schema) {
     return (
       <Paper elevation={3} sx={{ p: 3 }}>
@@ -132,7 +186,16 @@ const APITester = ({ connectionId }) => {
         API Testing Playground
       </Typography>
 
-      <Grid container spacing={2} sx={{ mt: 1 }}>
+      {/* Tabs for Test API vs Get Code */}
+      <Box sx={{ borderBottom: 1, borderColor:  'divider', mb: 3 }}>
+        <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
+          <Tab label="🧪 Test API" />
+          <Tab label="💻 Get Code" />
+        </Tabs>
+      </Box>
+
+      {/* Common Configuration (shown in both tabs) */}
+      <Grid container spacing={2}>
         <Grid item xs={12} md={6}>
           <TextField
             select
@@ -155,7 +218,7 @@ const APITester = ({ connectionId }) => {
             fullWidth
             label="Operation"
             value={operation}
-            onChange={(e) => setOperation(e.target.value)}
+            onChange={(e) => setOperation(e.target. value)}
           >
             <MenuItem value="GET">GET - List/Get</MenuItem>
             <MenuItem value="POST">POST - Create</MenuItem>
@@ -170,7 +233,7 @@ const APITester = ({ connectionId }) => {
               fullWidth
               label="Record ID (optional for GET list)"
               value={recordId}
-              onChange={(e) => setRecordId(e.target.value)}
+              onChange={(e) => setRecordId(e.target. value)}
               placeholder="Leave empty for GET all records"
             />
           </Grid>
@@ -183,7 +246,7 @@ const APITester = ({ connectionId }) => {
             value={queryParams}
             onChange={(e) => setQueryParams(e.target.value)}
             placeholder="limit=10&offset=0&orderBy=id"
-            helperText="Example: limit=10&offset=0&orderBy=id&orderDir=DESC"
+            helperText="Example:  limit=10&offset=0&orderBy=id&orderDir=DESC"
           />
         </Grid>
 
@@ -196,66 +259,85 @@ const APITester = ({ connectionId }) => {
               label="Request Body (JSON)"
               value={requestBody}
               onChange={(e) => setRequestBody(e.target.value)}
-              placeholder='{"column": "value"}'
+              placeholder='{"column":  "value"}'
             />
           </Grid>
         )}
-
-        <Grid item xs={12}>
-          <Button
-            variant="contained"
-            onClick={handleSend}
-            disabled={loading}
-            fullWidth
-          >
-            {loading ? <CircularProgress size={24} /> : 'Send Request'}
-          </Button>
-        </Grid>
       </Grid>
 
-      {error && (
-        <Alert severity="error" sx={{ mt: 2 }}>
-          {error}
-        </Alert>
-      )}
+      {/* Tab Content */}
+      {activeTab === 0 ?  (
+        // TEST API TAB
+        <>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <Button
+                variant="contained"
+                onClick={handleSend}
+                disabled={loading}
+                fullWidth
+              >
+                {loading ?  <CircularProgress size={24} /> : 'Send Request'}
+              </Button>
+            </Grid>
+          </Grid>
 
-      {response && (
-        <Box sx={{ mt: 3 }}>
-          <Divider sx={{ mb: 2 }} />
-          <Typography variant="h6" gutterBottom>
-            Response
-          </Typography>
+          {error && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {error}
+            </Alert>
+          )}
 
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="body2">
-              <strong>Status:</strong> {response.status} {response.statusText}
-            </Typography>
-            {response.timing && (
-              <Typography variant="body2">
-                <strong>Time:</strong> {response.timing}
+          {response && (
+            <Box sx={{ mt: 3 }}>
+              <Divider sx={{ mb: 2 }} />
+              <Typography variant="h6" gutterBottom>
+                Response
               </Typography>
-            )}
-          </Box>
 
-          <Typography variant="subtitle2" gutterBottom>
-            Response Body:
-          </Typography>
-          <Box sx={{ 
-            bgcolor: 'grey.900', 
-            p: 2, 
-            borderRadius: 1,
-            overflow: 'auto',
-            maxHeight: 400,
-          }}>
-            <ReactJson
-              src={response.data}
-              theme="monokai"
-              displayDataTypes={false}
-              displayObjectSize={false}
-              enableClipboard={true}
-              collapsed={1}
-            />
-          </Box>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2">
+                  <strong>Status:</strong> {response.status} {response.statusText}
+                </Typography>
+                {response.timing && (
+                  <Typography variant="body2">
+                    <strong>Time:</strong> {response.timing}
+                  </Typography>
+                )}
+              </Box>
+
+              <Typography variant="subtitle2" gutterBottom>
+                Response Body: 
+              </Typography>
+              <Box sx={{ 
+                bgcolor:  'grey.900', 
+                p: 2, 
+                borderRadius: 1,
+                overflow: 'auto',
+                maxHeight: 400,
+              }}>
+                <ReactJson
+                  src={response.data}
+                  theme="monokai"
+                  displayDataTypes={false}
+                  displayObjectSize={false}
+                  enableClipboard={true}
+                  collapsed={1}
+                />
+              </Box>
+            </Box>
+          )}
+        </>
+      ) : (
+        // GET CODE TAB
+        <Box sx={{ mt: 3 }}>
+          <Alert severity="info" sx={{ mb:  2 }}>
+            Copy the code below and embed it directly into your project! 
+          </Alert>
+          <CodeSnippet
+            endpoint={getCurrentEndpoint()}
+            options={getCodeOptions()}
+          />
         </Box>
       )}
     </Paper>

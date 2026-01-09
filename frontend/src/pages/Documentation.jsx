@@ -1,6 +1,7 @@
 import React from 'react';
 import { Container, Paper, Typography, Box, Button } from '@mui/material';
 import SwaggerUI from 'swagger-ui-react';
+import ImplementationSnippets from '../components/ImplementationSnippets';
 import 'swagger-ui-react/swagger-ui.css';
 
 const Documentation = ({ connection }) => {
@@ -37,6 +38,10 @@ const Documentation = ({ connection }) => {
       <Paper elevation={3}>
         <SwaggerUI url={swaggerUrl} />
       </Paper>
+
+      <Box sx={{ mt: 3 }}>
+        <ImplementationSnippets connectionId={connection.id} />
+      </Box>
     </Container>
   );
 };

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   List,
   ListItem,
@@ -15,7 +15,27 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { loadConnections } from '../utils/storage';
 
 const ConnectionList = ({ currentConnection, onSelect, onDelete }) => {
-  const connections = loadConnections();
+  const [connections, setConnections] = useState(loadConnections());
+
+  // Refresh list when current connection changes (e.g., after save/select)
+  useEffect(() => {
+    setConnections(loadConnections());
+  }, [currentConnection]);
+
+  // Wrap delete to refresh list after localStorage update
+  const handleDelete = (connectionId) => {
+    try {
+      const result = onDelete?.(connectionId);
+      if (result && typeof result.then === 'function') {
+        result.finally(() => setConnections(loadConnections()));
+      } else {
+        setConnections(loadConnections());
+      }
+    } catch (e) {
+      // Still attempt to refresh view
+      setConnections(loadConnections());
+    }
+  };
 
   if (connections.length === 0) {
     return (
@@ -41,7 +61,7 @@ const ConnectionList = ({ currentConnection, onSelect, onDelete }) => {
               <IconButton 
                 edge="end" 
                 aria-label="delete"
-                onClick={() => onDelete(conn.id)}
+                onClick={() => handleDelete(conn.id)}
               >
                 <DeleteIcon />
               </IconButton>
