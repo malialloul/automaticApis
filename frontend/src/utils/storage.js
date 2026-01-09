@@ -3,6 +3,8 @@ const STORAGE_KEY = 'automaticapis_connections';
 export const saveConnections = (connections) => {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(connections));
+    // Notify listeners in-app that connections list changed
+    window.dispatchEvent(new CustomEvent('connections-changed'));
   } catch (error) {
     console.error('Error saving to localStorage:', error);
   }

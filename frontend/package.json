@@ -22,6 +22,7 @@
     "axios": "^1.6.2",
     "dagre": "^0.8.5",
     "html-to-image": "^1.11.11",
+    "motion": "^12.25.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.48.2",

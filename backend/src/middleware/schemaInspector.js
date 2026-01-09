@@ -3,8 +3,10 @@
  * Discovers tables, columns, primary keys, and foreign key relationships
  */
 class SchemaInspector {
-  constructor(pool) {
+  constructor(pool, dialect = 'postgres', database = null) {
     this.pool = pool;
+    this.dialect = dialect;
+    this.database = database;
     this.schemaCache = null;
   }
 
@@ -40,16 +42,27 @@ class SchemaInspector {
    * @returns {Promise<Array>} List of tables
    */
   async getTables() {
-    const query = `
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-      AND table_type = 'BASE TABLE'
-      ORDER BY table_name;
-    `;
-
-    const result = await this.pool.query(query);
-    return result.rows;
+    if (this.dialect === 'postgres') {
+      const query = `
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        ORDER BY table_name;
+      `;
+      const result = await this.pool.query(query);
+      return result.rows;
+    } else {
+      const sql = `
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = ?
+        AND table_type = 'BASE TABLE'
+        ORDER BY table_name;
+      `;
+      const [rows] = await this.pool.query(sql, [this.database]);
+      return rows.map(r => ({ table_name: r.table_name || r.TABLE_NAME }));
+    }
   }
 
   /**
@@ -58,31 +71,57 @@ class SchemaInspector {
    * @returns {Promise<Array>} List of columns with metadata
    */
   async getColumns(tableName) {
-    const query = `
-      SELECT
-        column_name,
-        data_type,
-        is_nullable,
-        column_default,
-        character_maximum_length,
-        numeric_precision,
-        numeric_scale
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-      AND table_name = $1
-      ORDER BY ordinal_position;
-    `;
-
-    const result = await this.pool.query(query, [tableName]);
-    return result.rows.map(col => ({
-      name: col.column_name,
-      type: col.data_type,
-      nullable: col.is_nullable === 'YES',
-      default: col.column_default,
-      maxLength: col.character_maximum_length,
-      precision: col.numeric_precision,
-      scale: col.numeric_scale,
-    }));
+    if (this.dialect === 'postgres') {
+      const query = `
+        SELECT
+          column_name,
+          data_type,
+          is_nullable,
+          column_default,
+          character_maximum_length,
+          numeric_precision,
+          numeric_scale
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = $1
+        ORDER BY ordinal_position;
+      `;
+      const result = await this.pool.query(query, [tableName]);
+      return result.rows.map(col => ({
+        name: col.column_name,
+        type: col.data_type,
+        nullable: col.is_nullable === 'YES',
+        default: col.column_default,
+        maxLength: col.character_maximum_length,
+        precision: col.numeric_precision,
+        scale: col.numeric_scale,
+      }));
+    } else {
+      const sql = `
+        SELECT
+          column_name,
+          data_type,
+          is_nullable,
+          column_default,
+          character_maximum_length,
+          numeric_precision,
+          numeric_scale
+        FROM information_schema.columns
+        WHERE table_schema = ?
+        AND table_name = ?
+        ORDER BY ordinal_position;
+      `;
+      const [rows] = await this.pool.query(sql, [this.database, tableName]);
+      return rows.map(col => ({
+        name: col.column_name || col.COLUMN_NAME,
+        type: col.data_type || col.DATA_TYPE,
+        nullable: (col.is_nullable || col.IS_NULLABLE) === 'YES',
+        default: col.column_default || col.COLUMN_DEFAULT,
+        maxLength: col.character_maximum_length || col.CHARACTER_MAXIMUM_LENGTH,
+        precision: col.numeric_precision || col.NUMERIC_PRECISION,
+        scale: col.numeric_scale || col.NUMERIC_SCALE,
+      }));
+    }
   }
 
   /**
@@ -91,16 +130,31 @@ class SchemaInspector {
    * @returns {Promise<Array>} List of primary key columns
    */
   async getPrimaryKeys(tableName) {
-    const query = `
-      SELECT a.attname as column_name
-      FROM pg_index i
-      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-      WHERE i.indrelid = $1::regclass
-      AND i.indisprimary;
-    `;
-
-    const result = await this.pool.query(query, [tableName]);
-    return result.rows.map(row => row.column_name);
+    if (this.dialect === 'postgres') {
+      const query = `
+        SELECT a.attname as column_name
+        FROM pg_index i
+        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = $1::regclass
+        AND i.indisprimary;
+      `;
+      const result = await this.pool.query(query, [tableName]);
+      return result.rows.map(row => row.column_name);
+    } else {
+      const sql = `
+        SELECT k.COLUMN_NAME AS column_name
+        FROM information_schema.table_constraints t
+        JOIN information_schema.key_column_usage k
+          ON k.constraint_name = t.constraint_name
+          AND k.table_schema = t.table_schema
+          AND k.table_name = t.table_name
+        WHERE t.constraint_type = 'PRIMARY KEY'
+        AND t.table_schema = ?
+        AND t.table_name = ?;
+      `;
+      const [rows] = await this.pool.query(sql, [this.database, tableName]);
+      return rows.map(r => r.column_name || r.COLUMN_NAME);
+    }
   }
 
   /**
@@ -109,33 +163,53 @@ class SchemaInspector {
    * @returns {Promise<Array>} List of foreign key relationships
    */
   async getForeignKeys(tableName) {
-    const query = `
-      SELECT
-        kcu.column_name,
-        ccu.table_name AS foreign_table_name,
-        ccu.column_name AS foreign_column_name,
-        rc.constraint_name
-      FROM information_schema.table_constraints AS tc
-      JOIN information_schema.key_column_usage AS kcu
-        ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-      JOIN information_schema.constraint_column_usage AS ccu
-        ON ccu.constraint_name = tc.constraint_name
-        AND ccu.table_schema = tc.table_schema
-      JOIN information_schema.referential_constraints AS rc
-        ON rc.constraint_name = tc.constraint_name
-      WHERE tc.constraint_type = 'FOREIGN KEY'
-      AND tc.table_name = $1
-      AND tc.table_schema = 'public';
-    `;
-
-    const result = await this.pool.query(query, [tableName]);
-    return result.rows.map(row => ({
-      columnName: row.column_name,
-      foreignTable: row.foreign_table_name,
-      foreignColumn: row.foreign_column_name,
-      constraintName: row.constraint_name,
-    }));
+    if (this.dialect === 'postgres') {
+      const query = `
+        SELECT
+          kcu.column_name,
+          ccu.table_name AS foreign_table_name,
+          ccu.column_name AS foreign_column_name,
+          rc.constraint_name
+        FROM information_schema.table_constraints AS tc
+        JOIN information_schema.key_column_usage AS kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage AS ccu
+          ON ccu.constraint_name = tc.constraint_name
+          AND ccu.table_schema = tc.table_schema
+        JOIN information_schema.referential_constraints AS rc
+          ON rc.constraint_name = tc.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_name = $1
+        AND tc.table_schema = 'public';
+      `;
+      const result = await this.pool.query(query, [tableName]);
+      return result.rows.map(row => ({
+        columnName: row.column_name,
+        foreignTable: row.foreign_table_name,
+        foreignColumn: row.foreign_column_name,
+        constraintName: row.constraint_name,
+      }));
+    } else {
+      const sql = `
+        SELECT
+          k.COLUMN_NAME AS column_name,
+          k.REFERENCED_TABLE_NAME AS foreign_table_name,
+          k.REFERENCED_COLUMN_NAME AS foreign_column_name,
+          k.CONSTRAINT_NAME AS constraint_name
+        FROM information_schema.key_column_usage k
+        WHERE k.TABLE_SCHEMA = ?
+        AND k.TABLE_NAME = ?
+        AND k.REFERENCED_TABLE_NAME IS NOT NULL;
+      `;
+      const [rows] = await this.pool.query(sql, [this.database, tableName]);
+      return rows.map(row => ({
+        columnName: row.column_name || row.COLUMN_NAME,
+        foreignTable: row.foreign_table_name || row.REFERENCED_TABLE_NAME,
+        foreignColumn: row.foreign_column || row.REFERENCED_COLUMN_NAME,
+        constraintName: row.constraint_name || row.CONSTRAINT_NAME,
+      }));
+    }
   }
 
   /**
@@ -144,31 +218,50 @@ class SchemaInspector {
    * @returns {Promise<Array>} List of reverse foreign key relationships
    */
   async getReverseForeignKeys(tableName) {
-    const query = `
-      SELECT
-        tc.table_name AS referencing_table,
-        kcu.column_name AS referencing_column,
-        ccu.column_name AS referenced_column,
-        tc.constraint_name
-      FROM information_schema.table_constraints AS tc
-      JOIN information_schema.key_column_usage AS kcu
-        ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-      JOIN information_schema.constraint_column_usage AS ccu
-        ON ccu.constraint_name = tc.constraint_name
-        AND ccu.table_schema = tc.table_schema
-      WHERE tc.constraint_type = 'FOREIGN KEY'
-      AND ccu.table_name = $1
-      AND tc.table_schema = 'public';
-    `;
-
-    const result = await this.pool.query(query, [tableName]);
-    return result.rows.map(row => ({
-      referencingTable: row.referencing_table,
-      referencingColumn: row.referencing_column,
-      referencedColumn: row.referenced_column,
-      constraintName: row.constraint_name,
-    }));
+    if (this.dialect === 'postgres') {
+      const query = `
+        SELECT
+          tc.table_name AS referencing_table,
+          kcu.column_name AS referencing_column,
+          ccu.column_name AS referenced_column,
+          tc.constraint_name
+        FROM information_schema.table_constraints AS tc
+        JOIN information_schema.key_column_usage AS kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage AS ccu
+          ON ccu.constraint_name = tc.constraint_name
+          AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND ccu.table_name = $1
+        AND tc.table_schema = 'public';
+      `;
+      const result = await this.pool.query(query, [tableName]);
+      return result.rows.map(row => ({
+        referencingTable: row.referencing_table,
+        referencingColumn: row.referencing_column,
+        referencedColumn: row.referenced_column,
+        constraintName: row.constraint_name,
+      }));
+    } else {
+      const sql = `
+        SELECT
+          k.TABLE_NAME AS referencing_table,
+          k.COLUMN_NAME AS referencing_column,
+          k.REFERENCED_COLUMN_NAME AS referenced_column,
+          k.CONSTRAINT_NAME AS constraint_name
+        FROM information_schema.key_column_usage k
+        WHERE k.TABLE_SCHEMA = ?
+        AND k.REFERENCED_TABLE_NAME = ?;
+      `;
+      const [rows] = await this.pool.query(sql, [this.database, tableName]);
+      return rows.map(row => ({
+        referencingTable: row.referencing_table || row.TABLE_NAME,
+        referencingColumn: row.referencing_column || row.COLUMN_NAME,
+        referencedColumn: row.referenced_column || row.REFERENCED_COLUMN_NAME,
+        constraintName: row.constraint_name || row.CONSTRAINT_NAME,
+      }));
+    }
   }
 
   /**

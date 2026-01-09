@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 
 /**
  * ConnectionManager - Manages PostgreSQL connection pools for multiple databases
@@ -6,7 +7,7 @@ const { Pool } = require('pg');
  */
 class ConnectionManager {
   constructor() {
-    this.connections = new Map();
+    this.connections = new Map(); // id -> { type, pool, database }
   }
 
   /**
@@ -17,29 +18,52 @@ class ConnectionManager {
    */
   async getConnection(connectionId, config) {
     if (this.connections.has(connectionId)) {
-      return this.connections.get(connectionId);
+      return this.connections.get(connectionId).pool;
     }
 
-    const pool = new Pool({
-      host: config.host,
-      port: config.port || 5432,
-      database: config.database,
-      user: config.user,
-      password: config.password,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
+    const type = (config.type || 'postgres').toLowerCase();
+    if (type === 'postgres') {
+      const pool = new Pool({
+        host: config.host,
+        port: config.port || 5432,
+        database: config.database,
+        user: config.user,
+        password: config.password,
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+      });
 
-    // Test connection
-    try {
-      const client = await pool.connect();
-      client.release();
-      this.connections.set(connectionId, pool);
-      return pool;
-    } catch (error) {
-      await pool.end();
-      throw error;
+      try {
+        const client = await pool.connect();
+        client.release();
+        this.connections.set(connectionId, { type, pool, database: config.database });
+        return pool;
+      } catch (error) {
+        await pool.end();
+        throw error;
+      }
+    } else if (type === 'mysql') {
+      const pool = await mysql.createPool({
+        host: config.host,
+        port: config.port || 3306,
+        database: config.database,
+        user: config.user,
+        password: config.password,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+      });
+      try {
+        const [rows] = await pool.query('SELECT 1');
+        this.connections.set(connectionId, { type, pool, database: config.database });
+        return pool;
+      } catch (error) {
+        await pool.end();
+        throw error;
+      }
+    } else {
+      throw new Error(`Unsupported database type: ${type}`);
     }
   }
 
@@ -49,25 +73,47 @@ class ConnectionManager {
    * @returns {Promise<boolean>} Connection test result
    */
   async testConnection(config) {
-    const pool = new Pool({
-      host: config.host,
-      port: config.port || 5432,
-      database: config.database,
-      user: config.user,
-      password: config.password,
-      max: 1,
-      connectionTimeoutMillis: 5000,
-    });
-
-    try {
-      const client = await pool.connect();
-      const result = await client.query('SELECT NOW()');
-      client.release();
-      await pool.end();
-      return { success: true, timestamp: result.rows[0].now };
-    } catch (error) {
-      await pool.end();
-      throw error;
+    const type = (config.type || 'postgres').toLowerCase();
+    if (type === 'postgres') {
+      const pool = new Pool({
+        host: config.host,
+        port: config.port || 5432,
+        database: config.database,
+        user: config.user,
+        password: config.password,
+        max: 1,
+        connectionTimeoutMillis: 5000,
+      });
+      try {
+        const client = await pool.connect();
+        const result = await client.query('SELECT NOW()');
+        client.release();
+        await pool.end();
+        return { success: true, timestamp: result.rows[0].now };
+      } catch (error) {
+        await pool.end();
+        throw error;
+      }
+    } else if (type === 'mysql') {
+      const pool = await mysql.createPool({
+        host: config.host,
+        port: config.port || 3306,
+        database: config.database,
+        user: config.user,
+        password: config.password,
+        waitForConnections: true,
+        connectionLimit: 1,
+      });
+      try {
+        const [rows] = await pool.query('SELECT NOW() AS now');
+        await pool.end();
+        return { success: true, timestamp: rows[0].now };
+      } catch (error) {
+        await pool.end();
+        throw error;
+      }
+    } else {
+      throw new Error(`Unsupported database type: ${type}`);
     }
   }
 
@@ -76,9 +122,9 @@ class ConnectionManager {
    * @param {string} connectionId - Connection identifier
    */
   async closeConnection(connectionId) {
-    const pool = this.connections.get(connectionId);
-    if (pool) {
-      await pool.end();
+    const info = this.connections.get(connectionId);
+    if (info) {
+      await info.pool.end();
       this.connections.delete(connectionId);
     }
   }
@@ -99,6 +145,10 @@ class ConnectionManager {
    */
   getConnectionIds() {
     return Array.from(this.connections.keys());
+  }
+
+  getInfo(connectionId) {
+    return this.connections.get(connectionId);
   }
 }
 

@@ -10,7 +10,7 @@ const Schema = ({ connection }) => {
         <Grid item xs={12}>
           <SchemaVisualizer connectionId={connection?.id} />
         </Grid>
-        
+
         <Grid item xs={12}>
           <RelationshipGraph connectionId={connection?.id} />
         </Grid>
