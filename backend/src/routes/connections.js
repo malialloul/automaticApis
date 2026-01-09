@@ -1,7 +1,7 @@
 const express = require('express');
 const connectionManager = require('../utils/connectionManager');
 const SchemaInspector = require('../middleware/schemaInspector');
-const APIGenerator = require('../middleware/apiGenerator');
+const APIGenerator = require('../middleware/apiGenerator2');
 const SwaggerGenerator = require('../middleware/swaggerGenerator');
 
 const router = express.Router();
@@ -10,13 +10,24 @@ const router = express.Router();
 const schemaCache = new Map();
 const apiRouters = new Map();
 
+// Helper to choose sensible default port per DB type
+function getDefaultPort(type) {
+  const t = (type || 'postgres').toLowerCase();
+  if (t === 'postgres') return 5432;
+  if (t === 'mysql') return 3306;
+  if (t === 'mssql') return 1433;
+  if (t === 'oracle') return 1521;
+  if (t === 'mongodb') return 27017;
+  return 5432;
+}
+
 /**
  * POST /api/connections/test
  * Test database connection
  */
 router.post('/test', async (req, res) => {
   try {
-    const { host, port, database, user, password } = req.body;
+    const { host, port, database, user, password, type } = req.body;
 
     if (!host || !database || !user || !password) {
       return res.status(400).json({ 
@@ -26,10 +37,11 @@ router.post('/test', async (req, res) => {
 
     const result = await connectionManager.testConnection({
       host,
-      port: port || 5432,
+      port: port || getDefaultPort(type),
       database,
       user,
       password,
+      type,
     });
 
     res.json({ 
@@ -53,7 +65,7 @@ router.post('/test', async (req, res) => {
 router.post('/:id/introspect', async (req, res) => {
   try {
     const connectionId = req.params.id;
-    const { host, port, database, user, password } = req.body;
+    const { host, port, database, user, password, type } = req.body;
 
     if (!host || !database || !user || !password) {
       return res.status(400).json({ 
@@ -64,21 +76,24 @@ router.post('/:id/introspect', async (req, res) => {
     // Get or create connection pool
     const pool = await connectionManager.getConnection(connectionId, {
       host,
-      port: port || 5432,
+      port: port || getDefaultPort(type),
       database,
       user,
       password,
+      type,
     });
 
+    const info = connectionManager.getInfo(connectionId);
+
     // Introspect schema
-    const inspector = new SchemaInspector(pool);
+    const inspector = new SchemaInspector(pool, info?.type || 'postgres', database);
     const schema = await inspector.introspect();
 
     // Cache schema
     schemaCache.set(connectionId, schema);
 
     // Generate API routes
-    const apiGenerator = new APIGenerator(connectionId, pool, schema);
+    const apiGenerator = new APIGenerator(connectionId, pool, schema, info?.type || 'postgres');
     const apiRouter = apiGenerator.generateRoutes();
     apiRouters.set(connectionId, apiRouter);
 

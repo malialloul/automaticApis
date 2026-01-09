@@ -18,8 +18,15 @@ const CrowsFootEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
 
   return (
     <g>
-      <path id={id} d={edgePath} style={{ fill: 'none', stroke: style.stroke || '#1976d2', strokeWidth: 2 }} />
+      {/* main relationship line */}
+      <path id={id} d={edgePath} style={{ fill: 'none', stroke: style.stroke || '#1976d2', strokeWidth: 2.5 }} />
+      {/* crow's foot at parent (target) end indicates 1..* */}
       {foot}
+      {/* source marker to clarify direction */}
+      <circle cx={sourceX} cy={sourceY} r={3} fill={style.stroke || '#1976d2'} />
+      {/* multiplicity labels near endpoints */}
+      <text x={sourceX + 6} y={sourceY - 6} fontSize={11} fill="#374151">N</text>
+      <text x={targetX + 6} y={targetY - 6} fontSize={11} fill="#374151">1</text>
       {label && (
         <EdgeLabelRenderer>
           <div style={{
@@ -39,4 +46,4 @@ const CrowsFootEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
   );
 };
 
-export default CrowsFootEdge;
+export default React.memo(CrowsFootEdge);

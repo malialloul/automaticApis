@@ -8,6 +8,10 @@ import {
   Alert,
   CircularProgress,
   Grid,
+  MenuItem,
+  Select,
+  InputLabel,
+  FormControl,
 } from '@mui/material';
 import { useForm } from 'react-hook-form';
 import { testConnection, introspectConnection } from '../services/api';
@@ -21,6 +25,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
       database: '',
       user: 'postgres',
       password: '',
+      type: 'postgres',
     },
   });
 
@@ -41,6 +46,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
         database: data.database,
         user: data.user,
         password: data.password,
+        type: data.type,
       });
       setTestResult(result);
     } catch (err) {
@@ -63,6 +69,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
         database: data.database,
         user: data.user,
         password: data.password,
+        type: data.type,
       });
 
       const connection = {
@@ -73,6 +80,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
         database: data.database,
         user: data.user,
         password: data.password,
+        type: data.type,
         introspectedAt: new Date().toISOString(),
       };
 
@@ -95,7 +103,21 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
       
       <Box component="form" onSubmit={handleSubmit(onSubmit)} sx={{ mt: 2 }}>
         <Grid container spacing={2}>
-          <Grid item xs={12}>
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth>
+              <InputLabel id="db-type-label">Database Type</InputLabel>
+              <Select
+                labelId="db-type-label"
+                label="Database Type"
+                defaultValue="postgres"
+                {...register('type')}
+              >
+                <MenuItem value="postgres">PostgreSQL</MenuItem>
+                <MenuItem value="mysql">MySQL</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={6}>
             <TextField
               fullWidth
               label="Connection ID (optional)"
@@ -103,6 +125,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
               helperText="Leave empty to auto-generate"
             />
           </Grid>
+          
 
           <Grid item xs={12} md={8}>
             <TextField

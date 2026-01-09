@@ -78,4 +78,4 @@ const TableNode = ({ data }) => {
   );
 };
 
-export default TableNode;
+export default React.memo(TableNode);

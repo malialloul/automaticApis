@@ -3,9 +3,10 @@
  * Supports filtering, pagination, sorting, and complex queries
  */
 class QueryBuilder {
-  constructor(tableName, schema) {
+  constructor(tableName, schema, dialect = 'postgres') {
     this.tableName = tableName;
     this.schema = schema;
+    this.dialect = dialect;
     this.params = [];
     this.paramCounter = 1;
   }
@@ -17,6 +18,9 @@ class QueryBuilder {
    */
   addParam(value) {
     this.params.push(value);
+    if (this.dialect === 'mysql') {
+      return '?';
+    }
     return `$${this.paramCounter++}`;
   }
 
@@ -95,8 +99,11 @@ class QueryBuilder {
       throw new Error('No valid columns to insert');
     }
 
-    const query = `INSERT INTO ${this.sanitizeIdentifier(this.tableName)} (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
-    return { text: query, values: this.params };
+    const base = `INSERT INTO ${this.sanitizeIdentifier(this.tableName)} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
+    if (this.dialect === 'postgres') {
+      return { text: `${base} RETURNING *`, values: this.params };
+    }
+    return { text: base, values: this.params };
   }
 
   /**
@@ -122,8 +129,11 @@ class QueryBuilder {
       throw new Error('No valid columns to update');
     }
 
-    const query = `UPDATE ${this.sanitizeIdentifier(this.tableName)} SET ${setClauses.join(', ')} WHERE ${this.sanitizeIdentifier(primaryKey)} = ${this.addParam(id)} RETURNING *`;
-    return { text: query, values: this.params };
+    const base = `UPDATE ${this.sanitizeIdentifier(this.tableName)} SET ${setClauses.join(', ')} WHERE ${this.sanitizeIdentifier(primaryKey)} = ${this.addParam(id)}`;
+    if (this.dialect === 'postgres') {
+      return { text: `${base} RETURNING *`, values: this.params };
+    }
+    return { text: base, values: this.params };
   }
 
   /**
@@ -137,8 +147,11 @@ class QueryBuilder {
       throw new Error(`No primary key found for table ${this.tableName}`);
     }
 
-    const query = `DELETE FROM ${this.sanitizeIdentifier(this.tableName)} WHERE ${this.sanitizeIdentifier(primaryKey)} = ${this.addParam(id)} RETURNING *`;
-    return { text: query, values: this.params };
+    const base = `DELETE FROM ${this.sanitizeIdentifier(this.tableName)} WHERE ${this.sanitizeIdentifier(primaryKey)} = ${this.addParam(id)}`;
+    if (this.dialect === 'postgres') {
+      return { text: `${base} RETURNING *`, values: this.params };
+    }
+    return { text: base, values: this.params };
   }
 
   /**
@@ -220,7 +233,7 @@ class QueryBuilder {
    * @returns {string} Sanitized identifier
    */
   sanitizeIdentifier(identifier) {
-    // PostgreSQL reserved words to reject
+    // Reserved words to reject
     const reservedWords = new Set([
       'select', 'insert', 'update', 'delete', 'drop', 'create', 'alter', 'table',
       'database', 'schema', 'user', 'role', 'grant', 'revoke', 'union', 'where',
@@ -237,11 +250,14 @@ class QueryBuilder {
       throw new Error(`Cannot use reserved word as identifier: ${identifier}`);
     }
     
-    // Reject PostgreSQL system tables/schemas
+    // Reject system tables/schemas
     if (identifier.toLowerCase().startsWith('pg_') || identifier.toLowerCase().startsWith('information_schema')) {
       throw new Error(`Cannot access system tables: ${identifier}`);
     }
-    
+
+    if (this.dialect === 'mysql') {
+      return `\`${identifier}\``;
+    }
     return `"${identifier}"`;
   }
 }

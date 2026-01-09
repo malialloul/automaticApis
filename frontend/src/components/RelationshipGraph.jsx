@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Paper, Typography, Box, Alert, Stack, FormControlLabel, Switch, IconButton, Tooltip, Snackbar } from '@mui/material';
-import ReactFlow, { Background, Controls, MiniMap, MarkerType } from 'reactflow';
+import ReactFlow, { Background, Controls, MiniMap, MarkerType, applyNodeChanges } from 'reactflow';
 import TableNode from './graph/TableNode';
 import CrowsFootEdge from './graph/CrowsFootEdge';
 import { toPng, toSvg } from 'html-to-image';
@@ -12,7 +12,7 @@ const RelationshipGraph = ({ connectionId }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [schema, setSchema] = useState(null);
-  const [showColumns, setShowColumns] = useState(false);
+  const [showColumns, setShowColumns] = useState(true);
   const [copied, setCopied] = useState(false);
   const [autoLayout, setAutoLayout] = useState(true);
   const containerRef = useRef(null);
@@ -27,6 +27,7 @@ const RelationshipGraph = ({ connectionId }) => {
         const tableNames = Object.keys(s);
         
         // Create nodes for each table
+        const existingPos = new Map(nodes.map(n => [n.id, n.position]));
         const newNodes = tableNames.map((tableName, index) => {
           const x = (index % 4) * 300;
           const y = Math.floor(index / 4) * 150;
@@ -44,7 +45,7 @@ const RelationshipGraph = ({ connectionId }) => {
               foreignKeys: s[tableName].foreignKeys || [],
               showColumns,
             },
-            position: { x, y },
+            position: (!autoLayout && existingPos.has(tableName)) ? existingPos.get(tableName) : { x, y },
             style: {},
           };
         });
@@ -78,6 +79,10 @@ const RelationshipGraph = ({ connectionId }) => {
 
     loadSchema();
   }, [connectionId, showColumns, autoLayout]);
+
+  const onNodesChange = useCallback((changes) => {
+    setNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
 
   const applyDagreLayout = (nodes, edges, columnsExpanded) => {
     const g = new dagre.graphlib.Graph();
@@ -171,14 +176,7 @@ const RelationshipGraph = ({ connectionId }) => {
           Table Relationships
         </Typography>
         <Stack direction="row" spacing={2} alignItems="center">
-          <FormControlLabel
-            control={<Switch checked={showColumns} onChange={(e) => setShowColumns(e.target.checked)} />}
-            label="Show columns"
-          />
-          <FormControlLabel
-            control={<Switch checked={autoLayout} onChange={(e) => setAutoLayout(e.target.checked)} />}
-            label="Auto layout"
-          />
+         
           <Tooltip title="Copy Mermaid ER diagram">
             <span>
               <IconButton onClick={handleCopyMermaid} disabled={!schema}>
@@ -210,6 +208,9 @@ const RelationshipGraph = ({ connectionId }) => {
           nodeTypes={{ tableNode: TableNode }}
           edgeTypes={{ crowsFoot: CrowsFootEdge }}
           fitView
+          nodesDraggable
+          nodesConnectable={false}
+          onNodesChange={onNodesChange}
         >
           <Background />
           <Controls />
