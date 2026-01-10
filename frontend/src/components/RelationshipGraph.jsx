@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback, memo } from 'react';
 import { Paper, Typography, Box, Alert, Stack, FormControlLabel, Switch, IconButton, Tooltip, Snackbar } from '@mui/material';
 import ReactFlow, { Background, Controls, MiniMap, MarkerType, applyNodeChanges } from 'reactflow';
 import TableNode from './graph/TableNode';
@@ -7,6 +7,10 @@ import { toPng, toSvg } from 'html-to-image';
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
 import { getSchema } from '../services/api';
+
+// Memoize nodeTypes and edgeTypes outside the component to avoid React Flow error 002
+const nodeTypes = { tableNode: TableNode };
+const edgeTypes = { crowsFoot: CrowsFootEdge };
 
 const RelationshipGraph = ({ connectionId }) => {
   const [nodes, setNodes] = useState([]);
@@ -20,21 +24,16 @@ const RelationshipGraph = ({ connectionId }) => {
   useEffect(() => {
     const loadSchema = async () => {
       if (!connectionId) return;
-
       try {
         const s = await getSchema(connectionId);
         setSchema(s);
         const tableNames = Object.keys(s);
-        
         // Create nodes for each table
-        const existingPos = new Map(nodes.map(n => [n.id, n.position]));
         const newNodes = tableNames.map((tableName, index) => {
           const x = (index % 4) * 300;
           const y = Math.floor(index / 4) * 150;
           const cols = s[tableName].columns || [];
           const pkSet = new Set((s[tableName].primaryKeys || []));
-          const fkCols = new Set((s[tableName].foreignKeys || []).map(f => f.columnName));
-          
           return {
             id: tableName,
             type: 'tableNode',
@@ -45,15 +44,13 @@ const RelationshipGraph = ({ connectionId }) => {
               foreignKeys: s[tableName].foreignKeys || [],
               showColumns,
             },
-            position: (!autoLayout && existingPos.has(tableName)) ? existingPos.get(tableName) : { x, y },
+            position: { x, y },
             style: {},
           };
         });
-
         // Create edges for foreign key relationships
         const newEdges = [];
         let edgeId = 0;
-
         Object.entries(s).forEach(([tableName, tableInfo]) => {
           tableInfo.foreignKeys?.forEach(fk => {
             newEdges.push({
@@ -68,18 +65,16 @@ const RelationshipGraph = ({ connectionId }) => {
             });
           });
         });
-
-        const positionedNodes = autoLayout ? applyDagreLayout(newNodes, newEdges, showColumns) : newNodes;
-        setNodes(positionedNodes);
+        setNodes(newNodes);
         setEdges(newEdges);
       } catch (err) {
         console.error('Error loading schema:', err);
       }
     };
-
     loadSchema();
-  }, [connectionId, showColumns, autoLayout]);
+  }, [connectionId, showColumns]);
 
+  // Memoize onNodesChange to avoid re-renders
   const onNodesChange = useCallback((changes) => {
     setNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
@@ -205,8 +200,8 @@ const RelationshipGraph = ({ connectionId }) => {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          nodeTypes={{ tableNode: TableNode }}
-          edgeTypes={{ crowsFoot: CrowsFootEdge }}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
           nodesDraggable
           nodesConnectable={false}
@@ -228,4 +223,4 @@ const RelationshipGraph = ({ connectionId }) => {
   );
 };
 
-export default RelationshipGraph;
+export default memo(RelationshipGraph);
