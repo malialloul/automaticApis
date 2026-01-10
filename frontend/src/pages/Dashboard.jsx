@@ -472,7 +472,6 @@ export default function DashboardPage() {
                 <ToggleButton value="all">All</ToggleButton>
               </ToggleButtonGroup>
               <Button variant="outlined" disabled={refreshing} onClick={() => refreshSchemas()}>{refreshing ? 'Refreshing…' : 'Refresh'}</Button>
-            
             </Box>
           </Box>
 

@@ -39,6 +39,7 @@ import DashboardPage from "./pages/Dashboard";
 import { createAppTheme } from "./styles/theme";
 import Navigation from "./components/Navigation";
 import ConsoleLayout from "./components/ConsoleLayout";
+import ERDiagramViewer from "./pages/ERDiagramViewer";
 
 const queryClient = new QueryClient();
 
@@ -67,6 +68,7 @@ function AppContent() {
   const isConsoleRoute = [
     "/dashboard",
     "/schema",
+    "/er-diagram",
     "/apis",
     "/documentation",
   ].some((p) => location.pathname.startsWith(p));
@@ -85,6 +87,7 @@ function AppContent() {
               path="/schema"
               element={<Schema connection={currentConnection} />}
             />
+            <Route path="/er-diagram" element={<ERDiagramViewer connection={currentConnection} />} />
             <Route
               path="/apis"
               element={

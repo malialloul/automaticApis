@@ -38,40 +38,66 @@ import { closeConnection } from "../services/api";
 export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentConnection, selectConnection, deleteConnection: deleteStored, saveCurrentConnection } = useConnection();
+  const {
+    currentConnection,
+    selectConnection,
+    deleteConnection: deleteStored,
+    saveCurrentConnection,
+  } = useConnection();
   const [connections, setConnections] = useState([]);
   const [openDialog, setOpenDialog] = useState(false);
-  const [confirm, setConfirm] = useState({ open: false, type: null, target: null });
-  const [toast, setToast] = useState({ open: false, message: '', severity: 'success' });
+  const [confirm, setConfirm] = useState({
+    open: false,
+    type: null,
+    target: null,
+  });
+  const [toast, setToast] = useState({
+    open: false,
+    message: "",
+    severity: "success",
+  });
 
   useEffect(() => {
     const refresh = () => setConnections(loadConnections());
     refresh();
-    window.addEventListener('connections-changed', refresh);
+    window.addEventListener("connections-changed", refresh);
     const openHandler = () => setOpenDialog(true);
-    window.addEventListener('open-add-connection', openHandler);
+    window.addEventListener("open-add-connection", openHandler);
     const toastHandler = (e) => {
       const { message, severity } = e.detail || {};
-      setToast({ open: true, message: message || 'Done', severity: severity || 'success' });
+      setToast({
+        open: true,
+        message: message || "Done",
+        severity: severity || "success",
+      });
     };
-    window.addEventListener('toast', toastHandler);
+    window.addEventListener("toast", toastHandler);
     return () => {
-      window.removeEventListener('connections-changed', refresh);
-      window.removeEventListener('open-add-connection', openHandler);
-      window.removeEventListener('toast', toastHandler);
+      window.removeEventListener("connections-changed", refresh);
+      window.removeEventListener("open-add-connection", openHandler);
+      window.removeEventListener("toast", toastHandler);
     };
   }, []);
 
-  const tabs = useMemo(() => (
-    [
+  const tabs = useMemo(
+    () => [
       { label: "Dashboard", path: "/dashboard", disabled: false },
       { label: "Schema", path: "/schema", disabled: !currentConnection },
+      {
+        label: "ER Diagram",
+        path: "/er-diagram",
+        disabled: !currentConnection,
+      },
+
       { label: "APIs", path: "/apis", disabled: !currentConnection },
       { label: "Docs", path: "/documentation", disabled: !currentConnection },
-    ]
-  ), [currentConnection]);
+    ],
+    [currentConnection]
+  );
 
-  const currentIndex = tabs.findIndex((t) => location.pathname.startsWith(t.path));
+  const currentIndex = tabs.findIndex((t) =>
+    location.pathname.startsWith(t.path)
+  );
 
   return (
     <Box>
@@ -79,7 +105,9 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
         <Toolbar sx={{ gap: 2 }}>
           <Tabs
             value={currentIndex === -1 ? 0 : currentIndex}
-            onChange={(_, idx) => !tabs[idx].disabled && navigate(tabs[idx].path)}
+            onChange={(_, idx) =>
+              !tabs[idx].disabled && navigate(tabs[idx].path)
+            }
             sx={{ minHeight: 48, height: 48 }}
           >
             {tabs.map((t) => {
@@ -92,7 +120,10 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
                 />
               );
               return t.disabled ? (
-                <Tooltip key={t.path} title="Connect a database first to access this feature">
+                <Tooltip
+                  key={t.path}
+                  title="Connect a database first to access this feature"
+                >
                   <span>{tabEl}</span>
                 </Tooltip>
               ) : (
@@ -158,7 +189,10 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
                   sx={{
                     borderRadius: 1,
                     cursor: "pointer",
-                    bgcolor: currentConnection?.id === c.id ? "action.selected" : "unset",
+                    bgcolor:
+                      currentConnection?.id === c.id
+                        ? "action.selected"
+                        : "unset",
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
@@ -170,15 +204,23 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
                   <ListItemText
                     primary={c.name || c.database || "Connection"}
                     secondary={
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                        <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "success.main" }} />
+                      <Box
+                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                      >
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            bgcolor: "success.main",
+                          }}
+                        />
                         <Typography variant="caption" color="text.secondary">
                           {c.host}:{c.port}
                         </Typography>
                       </Box>
                     }
                   />
-                
                 </ListItem>
               ))
             )}
@@ -200,16 +242,28 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
           >
             + New Connection
           </Button>
-          <Dialog open={openDialog} onClose={() => setOpenDialog(false)} maxWidth="md" fullWidth>
+          <Dialog
+            open={openDialog}
+            onClose={() => setOpenDialog(false)}
+            maxWidth="md"
+            fullWidth
+          >
             <DialogTitle>Add Connection</DialogTitle>
             <DialogContent dividers>
               <ConnectionForm
                 onConnectionSaved={(conn) => {
                   saveCurrentConnection(conn);
-                  window.dispatchEvent(new CustomEvent('connections-changed'));
+                  window.dispatchEvent(new CustomEvent("connections-changed"));
                   selectConnection(conn);
                   setOpenDialog(false);
-                  window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Database connected successfully', severity: 'success' } }));
+                  window.dispatchEvent(
+                    new CustomEvent("toast", {
+                      detail: {
+                        message: "Database connected successfully",
+                        severity: "success",
+                      },
+                    })
+                  );
                 }}
                 onSchemaLoaded={() => {
                   // backend introspection done; nothing else required
@@ -220,40 +274,74 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
               <Button onClick={() => setOpenDialog(false)}>Close</Button>
             </DialogActions>
           </Dialog>
-          <Dialog open={confirm.open} onClose={() => setConfirm({ open: false, type: null, target: null })}>
+          <Dialog
+            open={confirm.open}
+            onClose={() =>
+              setConfirm({ open: false, type: null, target: null })
+            }
+          >
             <DialogTitle>
-              {confirm.type === 'delete' ? 'Delete Connection' : 'Disconnect Connection'}
+              {confirm.type === "delete"
+                ? "Delete Connection"
+                : "Disconnect Connection"}
             </DialogTitle>
             <DialogContent>
               <Typography>
                 {currentConnection?.id === confirm.target?.id
-                  ? 'You are currently connected to this database. Are you sure?'
-                  : confirm.type === 'delete'
-                  ? 'This will remove the saved connection locally.'
-                  : 'This will close the backend session.'}
+                  ? "You are currently connected to this database. Are you sure?"
+                  : confirm.type === "delete"
+                  ? "This will remove the saved connection locally."
+                  : "This will close the backend session."}
               </Typography>
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setConfirm({ open: false, type: null, target: null })}>Cancel</Button>
-              <Button color="error" onClick={async () => {
-                const target = confirm.target;
-                const type = confirm.type;
-                setConfirm({ open: false, type: null, target: null });
-                if (!target) return;
-                if (type === 'delete') {
-                  deleteStored(target.id);
-                  window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Connection deleted', severity: 'success' } }));
-                } else if (type === 'disconnect') {
-                  try {
-                    await closeConnection(target.id);
-                  } catch {}
-                  window.dispatchEvent(new CustomEvent('connections-changed'));
-                  window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Disconnected from database', severity: 'success' } }));
+              <Button
+                onClick={() =>
+                  setConfirm({ open: false, type: null, target: null })
                 }
-                if (currentConnection?.id === target.id) {
-                  selectConnection(null);
-                }
-              }}>Confirm</Button>
+              >
+                Cancel
+              </Button>
+              <Button
+                color="error"
+                onClick={async () => {
+                  const target = confirm.target;
+                  const type = confirm.type;
+                  setConfirm({ open: false, type: null, target: null });
+                  if (!target) return;
+                  if (type === "delete") {
+                    deleteStored(target.id);
+                    window.dispatchEvent(
+                      new CustomEvent("toast", {
+                        detail: {
+                          message: "Connection deleted",
+                          severity: "success",
+                        },
+                      })
+                    );
+                  } else if (type === "disconnect") {
+                    try {
+                      await closeConnection(target.id);
+                    } catch {}
+                    window.dispatchEvent(
+                      new CustomEvent("connections-changed")
+                    );
+                    window.dispatchEvent(
+                      new CustomEvent("toast", {
+                        detail: {
+                          message: "Disconnected from database",
+                          severity: "success",
+                        },
+                      })
+                    );
+                  }
+                  if (currentConnection?.id === target.id) {
+                    selectConnection(null);
+                  }
+                }}
+              >
+                Confirm
+              </Button>
             </DialogActions>
           </Dialog>
         </Box>
@@ -261,8 +349,18 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
         {/* Main content */}
         <Box sx={{ flex: 1, p: 3 }}>{children}</Box>
       </Box>
-      <Snackbar open={toast.open} autoHideDuration={3000} onClose={() => setToast({ ...toast, open: false })} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-        <Alert onClose={() => setToast({ ...toast, open: false })} severity={toast.severity} variant="filled" sx={{ width: '100%' }}>
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={3000}
+        onClose={() => setToast({ ...toast, open: false })}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      >
+        <Alert
+          onClose={() => setToast({ ...toast, open: false })}
+          severity={toast.severity}
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
           {toast.message}
         </Alert>
       </Snackbar>

@@ -62,48 +62,36 @@ const SchemaVisualizer = ({ connectionId }) => {
     return schema[dataTable].columns || [];
   }, [dataTable, schema]);
 
-  const openAddDialog = async () => {
+  const [foreignKeyOptions, setForeignKeyOptions] = useState({});
+  const openAddDialog = async (tableName) => {
+    if (!tableName) return;
+
+    setDataTable(tableName);
     setEditMode("add");
     setEditRow(null);
-    let nextId = "";
-    const pk = schema[dataTable]?.primaryKeys && schema[dataTable].primaryKeys[0];
-    if (
-      pk &&
-      tableColumns.length &&
-      typeof tableColumns.find((c) => c.name === pk)?.default === "string" &&
-      tableColumns.find((c) => c.name === pk).default.startsWith("nextval")
-    ) {
-      let maxId = null;
-      if (dataRows && dataRows.length > 0 && dataRows[0][pk] !== undefined) {
-        maxId = Math.max(...dataRows.map((r) => Number(r[pk] || 0)));
-      } else {
-        try {
-          // Fetch only the latest row for PK
-          const latestRows = await listRecords(connectionId, dataTable, {
-            limit: 1,
-            orderBy: pk,
-            orderDir: "desc",
-          });
-          if (Array.isArray(latestRows) && latestRows.length > 0) {
-            maxId = Number(latestRows[0][pk] || 0);
-          }
-        } catch {}
+
+    // Find PK name
+    const pk = schema[tableName]?.primaryKeys && schema[tableName].primaryKeys[0];
+
+    // Prepare FK dropdowns
+    const fks = (schema[tableName]?.foreignKeys || []);
+    const fkOptions = {};
+    for (const fk of fks) {
+      try {
+        const rows = await listRecords(connectionId, fk.foreignTable, { limit: 1000 });
+        fkOptions[fk.columnName] = rows;
+      } catch {
+        fkOptions[fk.columnName] = [];
       }
-      nextId = maxId !== null && !isNaN(maxId) ? String(maxId + 1) : "";
     }
+    setForeignKeyOptions(fkOptions);
+
+    // Set default values for all non-PK columns
     setEditValues(
       Object.fromEntries(
-        tableColumns.map((c) => {
-          if (
-            pk &&
-            c.name === pk &&
-            typeof c.default === "string" &&
-            c.default.startsWith("nextval")
-          ) {
-            return [c.name, nextId];
-          }
-          return [c.name, c.default ?? ""];
-        })
+        (schema[tableName].columns || [])
+          .filter((c) => !(pk && c.name === pk && typeof c.default === "string" && c.default.startsWith("nextval")))
+          .map((c) => [c.name, c.default ?? ""])
       )
     );
     setEditError(null);
@@ -135,10 +123,13 @@ const SchemaVisualizer = ({ connectionId }) => {
     setEditError(null);
     try {
       if (editMode === "add") {
-        await createRecord(connectionId, dataTable, editValues);
+        // Remove PK from payload
+        const pk = schema[dataTable]?.primaryKeys && schema[dataTable].primaryKeys[0];
+        const payload = { ...editValues };
+        if (pk) delete payload[pk];
+        await createRecord(connectionId, dataTable, payload);
       } else if (editMode === "edit" && editRow) {
-        const pk =
-          schema[dataTable].primaryKeys && schema[dataTable].primaryKeys[0];
+        const pk = schema[dataTable].primaryKeys && schema[dataTable].primaryKeys[0];
         await updateRecord(connectionId, dataTable, editRow[pk], editValues);
       }
       closeEditDialog();
@@ -236,6 +227,116 @@ const SchemaVisualizer = ({ connectionId }) => {
   useEffect(() => {
     loadSchema();
   }, [connectionId]);
+
+  const renderInputField = (col) => {
+    const value = editValues[col.name] ?? "";
+    const commonProps = {
+      fullWidth: true,
+      size: "small",
+      value,
+      onChange: (e) => handleEditChange(col.name, e.target.value),
+      placeholder: col.type,
+      disabled:
+        (editMode === "edit" && (schema[dataTable].primaryKeys || []).includes(col.name)),
+    };
+
+    const type = col.type.toLowerCase();
+    const name = col.name.toLowerCase();
+
+    // Hide PK field in add mode
+    if (editMode === "add" && (schema[dataTable].primaryKeys || []).includes(col.name)) {
+      return null;
+    }
+
+    // Foreign key dropdown
+    const fk = (schema[dataTable]?.foreignKeys || []).find(fk => fk.columnName === col.name);
+    if (fk && editMode === "add" && Array.isArray(foreignKeyOptions[col.name])) {
+      return (
+        <Select
+          {...commonProps}
+          value={value}
+          onChange={(e) => handleEditChange(col.name, e.target.value)}
+        >
+          <MenuItem value="">None</MenuItem>
+          {foreignKeyOptions[col.name].map((row, idx) => (
+            <MenuItem key={idx} value={row[fk.foreignColumn]}>
+              {String(row[fk.foreignColumn])}
+            </MenuItem>
+          ))}
+        </Select>
+      );
+    }
+
+    // Password field
+    if (name.includes("password")) {
+      return <TextField {...commonProps} type="password" />;
+    }
+
+    // Email field
+    if (name.includes("email")) {
+      return <TextField {...commonProps} type="email" />;
+    }
+
+    // Number fields
+    if (
+      [
+        "int",
+        "integer",
+        "bigint",
+        "smallint",
+        "numeric",
+        "decimal",
+        "float",
+        "double",
+      ].some((t) => type.includes(t))
+    ) {
+      return <TextField {...commonProps} type="number" />;
+    }
+
+    // Boolean fields
+    if (["bool", "boolean"].some((t) => type.includes(t))) {
+      return (
+        <Select
+          {...commonProps}
+          value={value === "" ? "" : Boolean(value)}
+          onChange={(e) =>
+            handleEditChange(
+              col.name,
+              e.target.value === "true" || e.target.value === true
+            )
+          }
+        >
+          <MenuItem value={true}>True</MenuItem>
+          <MenuItem value={false}>False</MenuItem>
+        </Select>
+      );
+    }
+
+    // Enum fields (general)
+    if (Array.isArray(col.enumOptions) && col.enumOptions.length > 0) {
+      return (
+        <Select
+          {...commonProps}
+          value={value}
+          onChange={(e) => handleEditChange(col.name, e.target.value)}
+        >
+          {col.enumOptions.map((ev) => (
+            <MenuItem key={ev} value={ev}>
+              {ev}
+            </MenuItem>
+          ))}
+        </Select>
+      );
+    }
+
+    // Date / Timestamp fields
+    if (["date", "timestamp", "datetime"].some((t) => type.includes(t))) {
+      return <TextField {...commonProps} type="datetime-local" />;
+    }
+
+    // Default to text
+    return <TextField {...commonProps} type="text" />;
+  };
 
   const handleExportTable = (tableName) => {
     try {
@@ -350,8 +451,9 @@ const SchemaVisualizer = ({ connectionId }) => {
                     color="primary"
                     onClick={(e) => {
                       e.stopPropagation();
-                    
-                      openAddDialog();
+                      setDataTable(tableName); // set the current table
+
+                      openAddDialog(tableName);
                     }}
                   >
                     Add
@@ -484,7 +586,7 @@ const SchemaVisualizer = ({ connectionId }) => {
             <Button
               size="small"
               variant="contained"
-              onClick={openAddDialog}
+              onClick={() => openAddDialog(dataTable)}
               sx={{ mr: 2 }}
             >
               Add
@@ -603,28 +705,18 @@ const SchemaVisualizer = ({ connectionId }) => {
             {editMode === "add" ? "Add Row" : "Edit Row"}
           </DialogTitle>
           <DialogContent dividers>
-            {tableColumns.map((col) => (
-              <Box key={col.name} sx={{ mb: 2 }}>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                  {col.name}
-                </Typography>
-                <TextField
-                  fullWidth
-                  size="small"
-                  value={editValues[col.name] ?? ""}
-                  onChange={(e) => handleEditChange(col.name, e.target.value)}
-                  disabled={
-                    (editMode === "edit" &&
-                      (schema[dataTable].primaryKeys || []).includes(
-                        col.name
-                      )) ||
-                    (editMode === "add" &&
-                      (schema[dataTable].primaryKeys || []).includes(col.name))
-                  }
-                  placeholder={col.type}
-                />
-              </Box>
-            ))}
+            {tableColumns.map((col) => {
+              const input = renderInputField(col);
+              if (input === null) return null;
+              return (
+                <Box key={col.name} sx={{ mb: 2 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {col.name}
+                  </Typography>
+                  {input}
+                </Box>
+              );
+            })}
             {editError && <Typography color="error">{editError}</Typography>}
           </DialogContent>
           <DialogActions>

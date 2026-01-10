@@ -80,13 +80,29 @@ class SchemaInspector {
           column_default,
           character_maximum_length,
           numeric_precision,
-          numeric_scale
+          numeric_scale,
+          udt_name
         FROM information_schema.columns
         WHERE table_schema = 'public'
         AND table_name = $1
         ORDER BY ordinal_position;
       `;
       const result = await this.pool.query(query, [tableName]);
+      // Find enum columns
+      const enumCols = result.rows.filter(col => col.data_type === 'USER-DEFINED');
+      let enumOptionsMap = {};
+      if (enumCols.length > 0) {
+        for (const col of enumCols) {
+          // Get enum values for this type
+          const enumRes = await this.pool.query(
+            `SELECT enumlabel FROM pg_enum WHERE enumtypid = (
+              SELECT oid FROM pg_type WHERE typname = $1
+            ) ORDER BY enumsortorder;`,
+            [col.udt_name]
+          );
+          enumOptionsMap[col.column_name] = enumRes.rows.map(r => r.enumlabel);
+        }
+      }
       return result.rows.map(col => ({
         name: col.column_name,
         type: col.data_type,
@@ -95,6 +111,7 @@ class SchemaInspector {
         maxLength: col.character_maximum_length,
         precision: col.numeric_precision,
         scale: col.numeric_scale,
+        enumOptions: enumOptionsMap[col.column_name] || undefined,
       }));
     } else {
       const sql = `
@@ -105,22 +122,38 @@ class SchemaInspector {
           column_default,
           character_maximum_length,
           numeric_precision,
-          numeric_scale
+          numeric_scale,
+          column_type
         FROM information_schema.columns
         WHERE table_schema = ?
         AND table_name = ?
         ORDER BY ordinal_position;
       `;
       const [rows] = await this.pool.query(sql, [this.database, tableName]);
-      return rows.map(col => ({
-        name: col.column_name || col.COLUMN_NAME,
-        type: col.data_type || col.DATA_TYPE,
-        nullable: (col.is_nullable || col.IS_NULLABLE) === 'YES',
-        default: col.column_default || col.COLUMN_DEFAULT,
-        maxLength: col.character_maximum_length || col.CHARACTER_MAXIMUM_LENGTH,
-        precision: col.numeric_precision || col.NUMERIC_PRECISION,
-        scale: col.numeric_scale || col.NUMERIC_SCALE,
-      }));
+      return rows.map(col => {
+        const name = col.column_name || col.COLUMN_NAME;
+        const type = col.data_type || col.DATA_TYPE;
+        let enumOptions;
+        if (type === 'enum' && (col.column_type || col.COLUMN_TYPE)) {
+          // Extract options from: enum('a','b','c')
+          const match = (col.column_type || col.COLUMN_TYPE).match(/^enum\((.*)\)$/i);
+          if (match && match[1]) {
+            enumOptions = match[1]
+              .split(/','/)
+              .map(s => s.replace(/^'/, '').replace(/'$/, ''));
+          }
+        }
+        return {
+          name,
+          type,
+          nullable: (col.is_nullable || col.IS_NULLABLE) === 'YES',
+          default: col.column_default || col.COLUMN_DEFAULT,
+          maxLength: col.character_maximum_length || col.CHARACTER_MAXIMUM_LENGTH,
+          precision: col.numeric_precision || col.NUMERIC_PRECISION,
+          scale: col.numeric_scale || col.NUMERIC_SCALE,
+          enumOptions,
+        };
+      });
     }
   }
 
