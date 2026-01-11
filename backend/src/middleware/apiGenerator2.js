@@ -4,6 +4,10 @@ const QueryBuilder = require('./queryBuilder');
 class APIGenerator {
       // For each join table with multiple FKs, add endpoints under each referenced table to get related records by the other FK
       generateCrossTableEndpoints() {
+        // Diagnostic collections for generated and skipped cross-table endpoints
+        this._generatedCrossTableEndpoints = this._generatedCrossTableEndpoints || [];
+        this._skippedCrossTableEndpoints = this._skippedCrossTableEndpoints || [];
+
         for (const [tableName, tableSchema] of Object.entries(this.schema)) {
           const fks = tableSchema.foreignKeys || [];
           if (fks.length >= 2) {
@@ -12,50 +16,66 @@ class APIGenerator {
                 if (i === j) continue;
                 const fkA = fks[i]; // e.g., order_id
                 const fkB = fks[j]; // e.g., product_id
+
+                // Validate required FK metadata before creating the endpoint; skip if any required piece is missing
+                const missing = [];
+                if (!fkA) missing.push('fkA');
+                if (!fkB) missing.push('fkB');
+                if (missing.length > 0) {
+                  const reason = 'missing fk entries';
+                  console.warn('Skipping cross-table endpoint:', reason, { tableName, missing, fkA, fkB });
+                  this._skippedCrossTableEndpoints.push({ tableName, fkA, fkB, reason, missing });
+                  continue;
+                }
+                if (!fkA.foreignTable) missing.push('fkA.foreignTable');
+                if (!fkA.columnName) missing.push('fkA.columnName');
+                if (!fkB.foreignTable) missing.push('fkB.foreignTable');
+                if (!fkB.columnName) missing.push('fkB.columnName');
+                if (!fkB.foreignColumn) missing.push('fkB.foreignColumn');
+                if (missing.length > 0) {
+                  const reason = `missing FK metadata: ${missing.join(', ')}`;
+                  console.warn(`Skipping cross-table endpoint for ${tableName} due to ${reason}`, { fkA, fkB });
+                  this._skippedCrossTableEndpoints.push({ tableName, fkA, fkB, reason, missing });
+                  continue;
+                }
+                // Ensure referenced tables exist in the introspected schema
+                if (!this.schema[fkA.foreignTable] || !this.schema[fkB.foreignTable]) {
+                  const reason = 'referenced table not present in schema';
+                  console.warn(`Skipping cross-table endpoint for ${tableName} because ${reason}`, { fkA, fkB });
+                  this._skippedCrossTableEndpoints.push({ tableName, fkA, fkB, reason });
+                  continue;
+                }
+
                 // Endpoint under fkA.foreignTable: /orders/by_order_id/:order_id/products
                 const endpoint = `/${fkA.foreignTable}/by_${fkA.columnName}/:${fkA.columnName}/${fkB.foreignTable}`;
+                console.log('Adding cross-table endpoint:', endpoint);
+                this._generatedCrossTableEndpoints.push({ endpoint, tableName, fkA, fkB });
+
                 this.router.get(endpoint, async (req, res) => {
                   try {
                     // Get all fkB rows for the given fkA and build the array in JS (avoids DB-specific JSON functions)
                     try {
-                      // Defensive: ensure required FK metadata is present
-                      if (!fkA || !fkB || !fkA.columnName || !fkB.columnName) {
-                        console.error('Malformed FK metadata for cross-table endpoint', { tableName, fkA, fkB });
-                        return res.status(400).json({ error: 'Malformed foreign key metadata for this join endpoint' });
-                      }
-
                       // Use QueryBuilder to sanitize identifiers and parameter placeholders per dialect
                       const qb = new QueryBuilder(tableName, tableSchema, this.dialect);
                       const wherePlaceholder = qb.addParam(req.params[fkA.columnName]);
 
-                      // Use fallback column names where necessary (prefer explicit metadata, otherwise first column of table)
-                      const fkACol = fkA.columnName;
-                      const fkBCol = fkB.columnName || (this.schema[tableName]?.columns?.[0]?.name);
-                      const fkBForeignCol = fkB.foreignColumn || this.schema[fkB.foreignTable]?.columns?.[0]?.name;
-
-                      if (!fkBCol || !fkBForeignCol) {
-                        console.error('Unable to determine FK columns for join', { fkA, fkB, tableName });
-                        return res.status(400).json({ error: 'Unable to determine foreign key columns for this join endpoint' });
-                      }
-
-                      const joinSql = `SELECT ${qb.sanitizeIdentifier(fkACol)} as key_id, p.* FROM ${qb.sanitizeIdentifier(tableName)} jt JOIN ${qb.sanitizeIdentifier(fkB.foreignTable)} p ON jt.${qb.sanitizeIdentifier(fkBCol)} = p.${qb.sanitizeIdentifier(fkBForeignCol)} WHERE jt.${qb.sanitizeIdentifier(fkACol)} = ${wherePlaceholder}`;
+                      const joinSql = `SELECT ${qb.sanitizeIdentifier(fkA.columnName)} as key_id, p.* FROM ${qb.sanitizeIdentifier(tableName)} jt JOIN ${qb.sanitizeIdentifier(fkB.foreignTable)} p ON jt.${qb.sanitizeIdentifier(fkB.columnName)} = p.${qb.sanitizeIdentifier(fkB.foreignColumn)} WHERE jt.${qb.sanitizeIdentifier(fkA.columnName)} = ${wherePlaceholder}`;
 
                       const result = await this.pool.query(joinSql, qb.params);
                       const rows = result.rows ?? result[0] ?? [];
                       if (!rows || rows.length === 0) return res.json({ [fkA.columnName]: req.params[fkA.columnName], [fkB.foreignTable]: [] });
 
-                      // Extract related rows from result set (remove key_id)
-                      const related = rows.map((r) => {
+                      // Extract products from rows (remove key_id)
+                      const products = rows.map((r) => {
                         const copy = { ...r };
                         delete copy.key_id;
                         return copy;
                       });
 
-                      return res.json({ [fkA.columnName]: req.params[fkA.columnName], [fkB.foreignTable]: related });
+                      return res.json({ [fkA.columnName]: req.params[fkA.columnName], [fkB.foreignTable]: products });
                     } catch (err) {
-                      // Surface the error
-                      console.error(`Error executing cross-table join for ${endpoint}:`, err);
-                      return res.status(500).json({ error: err.message });
+                      // Fallback and surface the original error
+                      throw err;
                     }
                   } catch (error) {
                     console.error(`Error in cross-table endpoint ${endpoint}:`, error);
@@ -146,6 +166,21 @@ class APIGenerator {
       this.generateTableRoutes(tableName, tableSchema);
     }
     this.generateCrossTableEndpoints();
+
+    // Debug route to return generated and skipped cross-table endpoints for this connection
+    this.router.get('/__debug/generated-routes', async (req, res) => {
+      try {
+        res.json({
+          connectionId: this.connectionId,
+          generated: this._generatedCrossTableEndpoints || [],
+          skipped: this._skippedCrossTableEndpoints || [],
+        });
+      } catch (err) {
+        console.error('Error returning generated routes debug info:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     return this.router;
   }
 
