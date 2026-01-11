@@ -9,6 +9,7 @@ const router = express.Router();
 // Store schema cache for each connection
 const schemaCache = new Map();
 const apiRouters = new Map();
+const apiGenerators = new Map();
 
 // Helper to choose sensible default port per DB type
 function getDefaultPort(type) {
@@ -96,6 +97,7 @@ router.post('/:id/introspect', async (req, res) => {
     const apiGenerator = new APIGenerator(connectionId, pool, schema, info?.type || 'postgres');
     const apiRouter = apiGenerator.generateRoutes();
     apiRouters.set(connectionId, apiRouter);
+    apiGenerators.set(connectionId, apiGenerator);
 
     // Count tables and relationships
     const tableCount = Object.keys(schema).length;
@@ -160,6 +162,29 @@ router.get('/:id/swagger', (req, res) => {
 });
 
 /**
+ * GET /api/connections/:id/debug-generated-routes
+ * Return diagnostics collected during route generation (generated and skipped cross-table endpoints)
+ */
+router.get('/:id/debug-generated-routes', (req, res) => {
+  const connectionId = req.params.id;
+  const generator = apiGenerators.get(connectionId);
+  const schema = schemaCache.get(connectionId);
+  const hasRoutes = apiRouters.has(connectionId);
+
+  if (!generator) {
+    return res.status(404).json({ error: 'No generator found for this connection. Please introspect the database first.' });
+  }
+
+  res.json({
+    connectionId,
+    hasRoutes,
+    hasSchema: !!schema,
+    generated: generator._generatedCrossTableEndpoints || [],
+    skipped: generator._skippedCrossTableEndpoints || []
+  });
+});
+
+/**
  * DELETE /api/connections/:id
  * Close and remove a connection
  */
@@ -198,4 +223,4 @@ router.get('/', (req, res) => {
   res.json(details);
 });
 
-module.exports = { router, apiRouters, schemaCache };
+module.exports = { router, apiRouters, schemaCache, apiGenerators };

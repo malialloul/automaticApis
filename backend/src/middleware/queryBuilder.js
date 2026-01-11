@@ -256,9 +256,11 @@ class QueryBuilder {
       // Check if this table has FK to relatedTable via fkColumn
       const fk = relatedSchema.foreignKeys?.find(fk => fk.foreignTable === relatedTable && fk.columnName === fkColumn);
       if (fk) {
-        // e.g., SELECT * FROM relatedTable WHERE id = (SELECT fk FROM thisTable WHERE fkCol = id)
-        const subquery = `SELECT ${this.sanitizeIdentifier(fk.columnName)} FROM ${this.sanitizeIdentifier(this.tableName)} WHERE ${this.sanitizeIdentifier(fk.columnName)} = ${this.addParam(id)}`;
-        let query = `SELECT * FROM ${this.sanitizeIdentifier(relatedTable)} WHERE ${this.sanitizeIdentifier(fk.foreignColumn)} = (${subquery})`;
+        // If we were passed a FK value (fkColumn), we can directly query the related table
+        // for rows where relatedTable.foreignColumn = id. Using a subquery here could return
+        // multiple rows and lead to "Subquery returns more than 1 row" errors, so use
+        // direct equality which matches the intended semantics.
+        let query = `SELECT * FROM ${this.sanitizeIdentifier(relatedTable)} WHERE ${this.sanitizeIdentifier(fk.foreignColumn)} = ${this.addParam(id)}`;
         if (orderBy) {
           const direction = orderDir.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
           query += ` ORDER BY ${this.sanitizeIdentifier(orderBy)} ${direction}`;
@@ -341,13 +343,19 @@ class QueryBuilder {
    * @returns {string} Sanitized identifier
    */
   sanitizeIdentifier(identifier) {
+    // Validate identifier is a non-empty string
+    if (typeof identifier !== 'string' || identifier.trim() === '') {
+      throw new Error(`Invalid identifier (not a non-empty string): ${String(identifier)}`);
+    }
+
     // Only allow alphanumeric and underscore, must start with letter or underscore
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier)) {
       throw new Error(`Invalid identifier: ${identifier}`);
     }
 
-    // Reject system tables/schemas
-    if (identifier.toLowerCase().startsWith('pg_') || identifier.toLowerCase().startsWith('information_schema')) {
+    // Reject system tables/schemas (safely compute lowercase after validation)
+    const lower = identifier.toLowerCase();
+    if (lower.startsWith('pg_') || lower.startsWith('information_schema')) {
       throw new Error(`Cannot access system tables: ${identifier}`);
     }
 

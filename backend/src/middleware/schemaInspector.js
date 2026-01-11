@@ -264,7 +264,8 @@ class SchemaInspector {
       return rows.map(row => ({
         columnName: row.column_name || row.COLUMN_NAME,
         foreignTable: row.foreign_table_name || row.REFERENCED_TABLE_NAME,
-        foreignColumn: row.foreign_column || row.REFERENCED_COLUMN_NAME,
+        // MySQL alias is 'foreign_column_name' (or REFERENCED_COLUMN_NAME); ensure we map it correctly
+        foreignColumn: row.foreign_column_name || row.REFERENCED_COLUMN_NAME,
         constraintName: row.constraint_name || row.CONSTRAINT_NAME,
       }));
     }
