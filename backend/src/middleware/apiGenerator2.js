@@ -16,18 +16,47 @@ class APIGenerator {
                 const endpoint = `/${fkA.foreignTable}/by_${fkA.columnName}/:${fkA.columnName}/${fkB.foreignTable}`;
                 this.router.get(endpoint, async (req, res) => {
                   try {
-                    // Get all fkB values for the given fkA, then join to fkB.foreignTable
-                    const joinSql = `SELECT jt."${fkA.columnName}" as key_id, json_agg(row_to_json(p.*)) as ${fkB.foreignTable}
-                      FROM "${tableName}" jt
-                      JOIN "${fkB.foreignTable}" p ON jt."${fkB.columnName}" = p."${fkB.foreignColumn}"
-                      WHERE jt."${fkA.columnName}" = $1
-                      GROUP BY jt."${fkA.columnName}"`;
-                    const values = [req.params[fkA.columnName]];
-                    const result = await this.pool.query(joinSql, values);
-                    if (result.rows.length === 0) return res.json({ [fkA.columnName]: req.params[fkA.columnName], [fkB.foreignTable]: [] });
-                    // Return { order_id, products: [...] }
-                    const row = result.rows[0];
-                    res.json({ [fkA.columnName]: row.key_id, [fkB.foreignTable]: row[fkB.foreignTable] });
+                    // Get all fkB rows for the given fkA and build the array in JS (avoids DB-specific JSON functions)
+                    try {
+                      // Defensive: ensure required FK metadata is present
+                      if (!fkA || !fkB || !fkA.columnName || !fkB.columnName) {
+                        console.error('Malformed FK metadata for cross-table endpoint', { tableName, fkA, fkB });
+                        return res.status(400).json({ error: 'Malformed foreign key metadata for this join endpoint' });
+                      }
+
+                      // Use QueryBuilder to sanitize identifiers and parameter placeholders per dialect
+                      const qb = new QueryBuilder(tableName, tableSchema, this.dialect);
+                      const wherePlaceholder = qb.addParam(req.params[fkA.columnName]);
+
+                      // Use fallback column names where necessary (prefer explicit metadata, otherwise first column of table)
+                      const fkACol = fkA.columnName;
+                      const fkBCol = fkB.columnName || (this.schema[tableName]?.columns?.[0]?.name);
+                      const fkBForeignCol = fkB.foreignColumn || this.schema[fkB.foreignTable]?.columns?.[0]?.name;
+
+                      if (!fkBCol || !fkBForeignCol) {
+                        console.error('Unable to determine FK columns for join', { fkA, fkB, tableName });
+                        return res.status(400).json({ error: 'Unable to determine foreign key columns for this join endpoint' });
+                      }
+
+                      const joinSql = `SELECT ${qb.sanitizeIdentifier(fkACol)} as key_id, p.* FROM ${qb.sanitizeIdentifier(tableName)} jt JOIN ${qb.sanitizeIdentifier(fkB.foreignTable)} p ON jt.${qb.sanitizeIdentifier(fkBCol)} = p.${qb.sanitizeIdentifier(fkBForeignCol)} WHERE jt.${qb.sanitizeIdentifier(fkACol)} = ${wherePlaceholder}`;
+
+                      const result = await this.pool.query(joinSql, qb.params);
+                      const rows = result.rows ?? result[0] ?? [];
+                      if (!rows || rows.length === 0) return res.json({ [fkA.columnName]: req.params[fkA.columnName], [fkB.foreignTable]: [] });
+
+                      // Extract related rows from result set (remove key_id)
+                      const related = rows.map((r) => {
+                        const copy = { ...r };
+                        delete copy.key_id;
+                        return copy;
+                      });
+
+                      return res.json({ [fkA.columnName]: req.params[fkA.columnName], [fkB.foreignTable]: related });
+                    } catch (err) {
+                      // Surface the error
+                      console.error(`Error executing cross-table join for ${endpoint}:`, err);
+                      return res.status(500).json({ error: err.message });
+                    }
                   } catch (error) {
                     console.error(`Error in cross-table endpoint ${endpoint}:`, error);
                     res.status(500).json({ error: error.message });

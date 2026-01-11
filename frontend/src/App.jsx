@@ -72,7 +72,6 @@ function AppContent() {
     "/db-apis",
     "/documentation",
   ].some((p) => location.pathname.startsWith(p));
-  console.log("isConsoleRoute:", isConsoleRoute);
   return (
     <ThemeProvider theme={appTheme}>
       <CssBaseline />
