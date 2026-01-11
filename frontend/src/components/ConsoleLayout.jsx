@@ -89,7 +89,7 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
         disabled: !currentConnection,
       },
 
-      { label: "APIs", path: "/apis", disabled: !currentConnection },
+      { label: "APIs", path: "/db-apis", disabled: !currentConnection },
       { label: "Docs", path: "/documentation", disabled: !currentConnection },
     ],
     [currentConnection]
