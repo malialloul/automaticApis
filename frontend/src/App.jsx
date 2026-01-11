@@ -69,10 +69,10 @@ function AppContent() {
     "/dashboard",
     "/schema",
     "/er-diagram",
-    "/apis",
+    "/db-apis",
     "/documentation",
   ].some((p) => location.pathname.startsWith(p));
-
+  console.log("isConsoleRoute:", isConsoleRoute);
   return (
     <ThemeProvider theme={appTheme}>
       <CssBaseline />
@@ -87,20 +87,13 @@ function AppContent() {
               path="/schema"
               element={<Schema connection={currentConnection} />}
             />
-            <Route path="/er-diagram" element={<ERDiagramViewer connection={currentConnection} />} />
             <Route
-              path="/apis"
-              element={
-                currentConnection ? (
-                  <APIs connection={currentConnection} />
-                ) : (
-                  <Navigate
-                    to="/dashboard"
-                    replace
-                    state={{ notice: "Connect to a database to access APIs." }}
-                  />
-                )
-              }
+              path="/er-diagram"
+              element={<ERDiagramViewer connection={currentConnection} />}
+            />
+            <Route
+              path="/db-apis"
+              element={<APIs connection={currentConnection} />}
             />
             <Route
               path="/documentation"
