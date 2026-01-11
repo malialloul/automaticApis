@@ -103,6 +103,25 @@ class SchemaInspector {
           enumOptionsMap[col.column_name] = enumRes.rows.map(r => r.enumlabel);
         }
       }
+      // Find serial/identity columns (auto-increment)
+      const autoIncRes = await this.pool.query(
+        `SELECT a.attname as column_name
+         FROM pg_class c
+         JOIN pg_attribute a ON a.attrelid = c.oid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relname = $1
+         AND n.nspname = 'public'
+         AND (
+           a.attidentity IN ('a', 'd')
+           OR (
+             a.atthasdef AND (
+               SELECT pg_get_expr(adbin, adrelid) FROM pg_attrdef WHERE adrelid = c.oid AND adnum = a.attnum
+             ) ILIKE 'nextval%'
+           )
+         );`,
+        [tableName]
+      );
+      const autoIncCols = new Set(autoIncRes.rows.map(r => r.column_name));
       return result.rows.map(col => ({
         name: col.column_name,
         type: col.data_type,
@@ -112,6 +131,7 @@ class SchemaInspector {
         precision: col.numeric_precision,
         scale: col.numeric_scale,
         enumOptions: enumOptionsMap[col.column_name] || undefined,
+        isAutoIncrement: autoIncCols.has(col.column_name),
       }));
     } else {
       const sql = `
@@ -123,11 +143,13 @@ class SchemaInspector {
           character_maximum_length,
           numeric_precision,
           numeric_scale,
-          column_type
+          column_type,
+          extra
         FROM information_schema.columns
-        WHERE table_schema = ?
-        AND table_name = ?
-        ORDER BY ordinal_position;
+        LEFT JOIN information_schema.tables ON columns.table_name = tables.table_name AND columns.table_schema = tables.table_schema
+        WHERE columns.table_schema = ?
+        AND columns.table_name = ?
+        ORDER BY columns.ordinal_position;
       `;
       const [rows] = await this.pool.query(sql, [this.database, tableName]);
       return rows.map(col => {
@@ -143,6 +165,8 @@ class SchemaInspector {
               .map(s => s.replace(/^'/, '').replace(/'$/, ''));
           }
         }
+        // MySQL: auto-increment if extra contains 'auto_increment'
+        const isAutoIncrement = (col.extra || col.EXTRA || '').toLowerCase().includes('auto_increment');
         return {
           name,
           type,
@@ -152,6 +176,7 @@ class SchemaInspector {
           precision: col.numeric_precision || col.NUMERIC_PRECISION,
           scale: col.numeric_scale || col.NUMERIC_SCALE,
           enumOptions,
+          isAutoIncrement,
         };
       });
     }

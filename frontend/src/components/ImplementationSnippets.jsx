@@ -1,10 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Paper, Box, Typography, FormControl, InputLabel, Select, MenuItem, Stack, IconButton, Tooltip, Snackbar, Alert } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { getSchema } from '../services/api';
 import { BACKEND_LANGUAGE_OPTIONS, generateBackendSnippet } from '../utils/codeGenerator.jsx';
 
-const ImplementationSnippets = ({ connectionId }) => {
+const METHOD_TO_LANG = {
+  GET: 'express',
+  POST: 'express',
+  PUT: 'express',
+  DELETE: 'express',
+  // Extend as needed for other backend frameworks
+};
+
+const ImplementationSnippets = ({ connectionId, endpoint }) => {
   const [schema, setSchema] = useState(null);
   const [tables, setTables] = useState([]);
   const [selectedTable, setSelectedTable] = useState('');
@@ -26,22 +35,32 @@ const ImplementationSnippets = ({ connectionId }) => {
         setSchema(s || {});
         const t = Object.keys(s || {}).sort();
         setTables(t);
-        if (t.length) setSelectedTable(t[0]);
+        // If endpoint provided, prefer its table and method
+        if (endpoint?.table) {
+          setSelectedTable(endpoint.table);
+        } else if (t.length) setSelectedTable(t[0]);
+        // If endpoint has a method, set the language/method accordingly
+        if (endpoint?.method) {
+          const methodLang = METHOD_TO_LANG[endpoint.method.toUpperCase()] || BACKEND_LANGUAGE_OPTIONS[0]?.value || 'express';
+          setSelectedLang(methodLang);
+        }
       } catch (e) {
         setError(e?.message || 'Failed to load schema. Introspect the database first.');
       }
     })();
-  }, [connectionId]);
+  }, [connectionId, endpoint]);
 
   useEffect(() => {
     if (!schema || !selectedTable || !selectedLang) { setCode(''); return; }
     try {
-      const snippet = generateBackendSnippet(schema, selectedTable, selectedLang);
+      // Use endpoint.method if available, else default to GET
+      const method = endpoint?.method || 'GET';
+      const snippet = generateBackendSnippet(schema, selectedTable, selectedLang, method , endpoint);
       setCode(snippet);
     } catch (e) {
       setCode('// Error generating snippet: ' + (e?.message || 'Unknown error'));
     }
-  }, [schema, selectedTable, selectedLang]);
+  }, [schema, selectedTable, selectedLang, endpoint]);
 
   const handleCopy = async () => {
     try {
@@ -58,25 +77,17 @@ const ImplementationSnippets = ({ connectionId }) => {
     <MenuItem key={t} value={t}>{t}</MenuItem>
   )), [tables]);
 
+  const theme = useTheme();
+  const codeBg = theme.palette.mode === 'dark' ? 'grey.900' : '#f7fafc';
+
   return (
-    <Paper elevation={3} sx={{ p: 3 }}>
+    <Paper elevation={3} sx={{ p: 3, bgcolor: theme.palette.background.paper }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">Implementation Code Snippets</Typography>
       </Box>
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
-        <FormControl fullWidth>
-          <InputLabel id="table-label">Table</InputLabel>
-          <Select
-            labelId="table-label"
-            label="Table"
-            value={selectedTable}
-            onChange={(e) => setSelectedTable(e.target.value)}
-            disabled={!tables.length}
-          >
-            {tableMenu}
-          </Select>
-        </FormControl>
+      
 
         <FormControl fullWidth>
           <InputLabel id="lang-label">Language</InputLabel>
@@ -106,8 +117,8 @@ const ImplementationSnippets = ({ connectionId }) => {
       )}
 
       <Box sx={{
-        bgcolor: 'grey.900',
-        color: 'grey.100',
+        bgcolor: codeBg,
+        color: theme.palette.text.primary,
         borderRadius: 1,
         p: 2,
         fontFamily: 'Monaco, Menlo, Consolas, "Courier New", monospace',

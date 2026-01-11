@@ -24,6 +24,13 @@ class QueryBuilder {
     return `$${this.paramCounter++}`;
   }
 
+  // Get column type for a column name (lowercased), or null if not found
+  getColumnType(columnName) {
+    const col = this.schema.columns.find(c => c.name === columnName);
+    if (!col) return null;
+    return col.type ? String(col.type).toLowerCase() : null;
+  }
+
   /**
    * Build SELECT query with filters, pagination, and sorting
    * @param {object} options - Query options
@@ -34,11 +41,41 @@ class QueryBuilder {
 
     let query = `SELECT * FROM ${this.sanitizeIdentifier(this.tableName)}`;
 
-    // Build WHERE clause
+    // Build WHERE clause, support operator suffixes: __gt, __gte, __lt, __lte, __like
     const whereClauses = [];
-    for (const [column, value] of Object.entries(filters)) {
-      if (this.isValidColumn(column)) {
-        whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);
+    for (const [rawColumn, value] of Object.entries(filters)) {
+      // detect operator suffix
+      const opMatch = rawColumn.match(/(.+?)__(gt|gte|lt|lte|like)$/);
+      if (opMatch) {
+        const column = opMatch[1];
+        const op = opMatch[2];
+        if (!this.isValidColumn(column)) continue;
+        if (op === 'like') {
+          whereClauses.push(`${this.sanitizeIdentifier(column)} LIKE ${this.addParam(value)}`);
+        } else {
+          const map = { gt: '>', gte: '>=', lt: '<', lte: '<=' };
+          const sqlOp = map[op] || '=';
+          whereClauses.push(`${this.sanitizeIdentifier(column)} ${sqlOp} ${this.addParam(value)}`);
+        }
+      } else {
+        // no operator suffix, direct column equality
+        const column = rawColumn;
+        if (!this.isValidColumn(column)) continue;
+        const colType = this.getColumnType(column) || '';
+        if (colType.includes('json')) {
+          // value must be valid JSON to compare against a json/jsonb column; compare using jsonb when possible
+          try {
+            // allow objects/arrays and JSON strings
+            const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+            // store JSON string param and cast to jsonb for comparison
+            whereClauses.push(`${this.sanitizeIdentifier(column)}::jsonb = ${this.addParam(JSON.stringify(parsed))}::jsonb`);
+          } catch (e) {
+            // Fallback: compare JSON column text representation to scalar value (permissive)
+            whereClauses.push(`${this.sanitizeIdentifier(column)}::text = ${this.addParam(value)}`);
+          }
+        } else {
+          whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);
+        }
       }
     }
 
@@ -155,66 +192,137 @@ class QueryBuilder {
   }
 
   /**
+   * Build DELETE query using filter object (supports operator suffixes)
+   * @param {object} filters - Filter map possibly containing operator suffixes
+   * @returns {object} Query object
+   */
+  buildDeleteWhere(filters = {}) {
+    const whereClauses = [];
+    for (const [rawColumn, value] of Object.entries(filters)) {
+      const opMatch = rawColumn.match(/(.+?)__(gt|gte|lt|lte|like)$/);
+      if (opMatch) {
+        const column = opMatch[1];
+        const op = opMatch[2];
+        if (!this.isValidColumn(column)) continue;
+        if (op === 'like') {
+          whereClauses.push(`${this.sanitizeIdentifier(column)} LIKE ${this.addParam(value)}`);
+        } else {
+          const map = { gt: '>', gte: '>=', lt: '<', lte: '<=' };
+          const sqlOp = map[op] || '=';
+          whereClauses.push(`${this.sanitizeIdentifier(column)} ${sqlOp} ${this.addParam(value)}`);
+        }
+      } else {
+        const column = rawColumn;
+        if (!this.isValidColumn(column)) continue;
+        const colType = this.getColumnType(column) || '';
+        if (colType.includes('json')) {
+          try {
+            const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+            whereClauses.push(`${this.sanitizeIdentifier(column)}::jsonb = ${this.addParam(JSON.stringify(parsed))}::jsonb`);
+          } catch (e) {
+            // Fallback: compare JSON column text representation to scalar value (permissive)
+            whereClauses.push(`${this.sanitizeIdentifier(column)}::text = ${this.addParam(value)}`);
+          }
+        } else {
+          whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);
+        }
+      }
+    }
+
+    if (whereClauses.length === 0) {
+      throw new Error('Refusing to run DELETE without filters');
+    }
+
+    let query = `DELETE FROM ${this.sanitizeIdentifier(this.tableName)} WHERE ${whereClauses.join(' AND ')}`;
+    if (this.dialect === 'postgres') {
+      query += ' RETURNING *';
+    }
+    return { text: query, values: this.params };
+  }
+
+  /**
    * Build query for related records via foreign key
    * @param {string} relatedTable - Related table name
    * @param {any} id - Primary key value of the parent record
    * @param {object} options - Query options (pagination, sorting)
    * @returns {object} Query object
    */
-  buildRelatedQuery(relatedTable, id, options = {}) {
+  buildRelatedQuery(relatedTable, id, options = {}, fkColumn = null) {
     const { limit, offset, orderBy, orderDir = 'ASC' } = options;
-
-    // Find the foreign key relationship
     const relatedSchema = this.schema;
-    let foreignKeyColumn = null;
-    let isBelongsTo = false;
 
-    // Check if this is a belongs-to relationship (this table has FK to related table)
+    // If fkColumn is provided, use it to find the correct FK or reverse FK
+    if (fkColumn) {
+      // Check if this table has FK to relatedTable via fkColumn
+      const fk = relatedSchema.foreignKeys?.find(fk => fk.foreignTable === relatedTable && fk.columnName === fkColumn);
+      if (fk) {
+        // e.g., SELECT * FROM relatedTable WHERE id = (SELECT fk FROM thisTable WHERE fkCol = id)
+        const subquery = `SELECT ${this.sanitizeIdentifier(fk.columnName)} FROM ${this.sanitizeIdentifier(this.tableName)} WHERE ${this.sanitizeIdentifier(fk.columnName)} = ${this.addParam(id)}`;
+        let query = `SELECT * FROM ${this.sanitizeIdentifier(relatedTable)} WHERE ${this.sanitizeIdentifier(fk.foreignColumn)} = (${subquery})`;
+        if (orderBy) {
+          const direction = orderDir.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+          query += ` ORDER BY ${this.sanitizeIdentifier(orderBy)} ${direction}`;
+        }
+        if (limit) {
+          query += ` LIMIT ${this.addParam(parseInt(limit, 10))}`;
+        }
+        if (offset) {
+          query += ` OFFSET ${this.addParam(parseInt(offset, 10))}`;
+        }
+        return { text: query, values: this.params };
+      }
+      // Check if relatedTable has FK to this table via fkColumn (reverse FK)
+      const reverseFk = relatedSchema.reverseForeignKeys?.find(rfk => rfk.referencingTable === relatedTable && rfk.referencedColumn === fkColumn);
+      if (reverseFk) {
+        // e.g., SELECT * FROM relatedTable WHERE referencingColumn = id
+        let query = `SELECT * FROM ${this.sanitizeIdentifier(relatedTable)} WHERE ${this.sanitizeIdentifier(reverseFk.referencingColumn)} = ${this.addParam(id)}`;
+        if (orderBy) {
+          const direction = orderDir.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+          query += ` ORDER BY ${this.sanitizeIdentifier(orderBy)} ${direction}`;
+        }
+        if (limit) {
+          query += ` LIMIT ${this.addParam(parseInt(limit, 10))}`;
+        }
+        if (offset) {
+          query += ` OFFSET ${this.addParam(parseInt(offset, 10))}`;
+        }
+        return { text: query, values: this.params };
+      }
+    }
+
+    // Fallback: try to find any FK or reverse FK (legacy)
     const fk = relatedSchema.foreignKeys?.find(fk => fk.foreignTable === relatedTable);
     if (fk) {
-      // This is a belongs-to: SELECT * FROM relatedTable WHERE id = (SELECT fk FROM thisTable WHERE pk = id)
       const primaryKey = this.schema.primaryKeys[0];
       const subquery = `SELECT ${this.sanitizeIdentifier(fk.columnName)} FROM ${this.sanitizeIdentifier(this.tableName)} WHERE ${this.sanitizeIdentifier(primaryKey)} = ${this.addParam(id)}`;
       let query = `SELECT * FROM ${this.sanitizeIdentifier(relatedTable)} WHERE ${this.sanitizeIdentifier(fk.foreignColumn)} = (${subquery})`;
-
       if (orderBy) {
         const direction = orderDir.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
         query += ` ORDER BY ${this.sanitizeIdentifier(orderBy)} ${direction}`;
       }
-
       if (limit) {
         query += ` LIMIT ${this.addParam(parseInt(limit, 10))}`;
       }
-
       if (offset) {
         query += ` OFFSET ${this.addParam(parseInt(offset, 10))}`;
       }
-
       return { text: query, values: this.params };
     }
-
-    // Check if this is a has-many relationship (related table has FK to this table)
     const reverseFk = relatedSchema.reverseForeignKeys?.find(rfk => rfk.referencingTable === relatedTable);
     if (reverseFk) {
-      // This is a has-many: SELECT * FROM relatedTable WHERE fk = id
       let query = `SELECT * FROM ${this.sanitizeIdentifier(relatedTable)} WHERE ${this.sanitizeIdentifier(reverseFk.referencingColumn)} = ${this.addParam(id)}`;
-
       if (orderBy) {
         const direction = orderDir.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
         query += ` ORDER BY ${this.sanitizeIdentifier(orderBy)} ${direction}`;
       }
-
       if (limit) {
         query += ` LIMIT ${this.addParam(parseInt(limit, 10))}`;
       }
-
       if (offset) {
         query += ` OFFSET ${this.addParam(parseInt(offset, 10))}`;
       }
-
       return { text: query, values: this.params };
     }
-
     throw new Error(`No relationship found between ${this.tableName} and ${relatedTable}`);
   }
 

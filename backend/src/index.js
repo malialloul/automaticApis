@@ -4,6 +4,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const swaggerUi = require('swagger-ui-express');
 const { router: connectionsRouter, apiRouters } = require('./routes/connections');
+const autoIncrementRoute = require('./routes/autoIncrement');
 const authRouter = require('./routes/auth');
 const plansRouter = require('./routes/plans');
 
@@ -25,7 +26,9 @@ app.use('/api/auth', authRouter);
 app.use('/api/plans', plansRouter);
 
 // Connection management endpoints
+
 app.use('/api/connections', connectionsRouter);
+app.use('/api', autoIncrementRoute);
 
   // Dynamic API routes middleware
   // This intercepts /api/:connectionId/:table requests and routes to the appropriate API router
