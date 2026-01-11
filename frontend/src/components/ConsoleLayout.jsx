@@ -27,6 +27,7 @@ import { Brightness4, Brightness7 } from "@mui/icons-material";
 import StorageIcon from "@mui/icons-material/Storage";
 import AddIcon from "@mui/icons-material/Add";
 import SearchIcon from "@mui/icons-material/Search";
+import HomeIcon from "@mui/icons-material/Home";
 import DeleteIcon from "@mui/icons-material/Delete";
 import LinkOffIcon from "@mui/icons-material/LinkOff";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -103,6 +104,11 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
     <Box>
       <AppBar position="fixed" color="default" sx={{ boxShadow: 1 }}>
         <Toolbar sx={{ gap: 2 }}>
+          <Tooltip title="Back to home">
+            <IconButton color="inherit" onClick={() => navigate('/')} aria-label="home">
+              <HomeIcon />
+            </IconButton>
+          </Tooltip>
           <Tabs
             value={currentIndex === -1 ? 0 : currentIndex}
             onChange={(_, idx) =>

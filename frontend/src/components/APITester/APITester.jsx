@@ -14,10 +14,13 @@ import {
   Tab,
   Collapse,
   Chip,
+  Autocomplete,
+  Tooltip,
 } from "@mui/material";
 import ReactJson from "@microlink/react-json-view";
 import { getSchema, listRecords } from "../../services/api";
 import api from "../../services/api";
+import GetOptionsPanel from "./components/GetOptionsPanel";
 
 const APITester = ({ connectionId, endpoint, open, onClose }) => {
   const [schema, setSchema] = useState(null);
@@ -31,6 +34,20 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
   const [bodyFields, setBodyFields] = useState({});
   const [nextAutoId, setNextAutoId] = useState(null);
   const [foreignKeyOptions, setForeignKeyOptions] = useState({});
+
+  // Helper: build a short summary string for a row (exclude the FK value column)
+  const formatRowSummary = (row, valKey) => {
+    if (!row || typeof row !== 'object') return '';
+    const pairs = [];
+    for (const k of Object.keys(row)) {
+      if (k === valKey) continue;
+      const v = row[k];
+      if (v === undefined || v === null || String(v).trim() === '') continue;
+      pairs.push(`${k}: ${String(v)}`);
+      if (pairs.length >= 3) break;
+    }
+    return pairs.join(' • ');
+  };
   const [filters, setFilters] = useState({});
   // Path params extracted from endpoint.path (e.g. :order_id) - shown separately from WHERE filters
   const [pathParams, setPathParams] = useState({});
@@ -541,6 +558,152 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
         </TextField>
       );
     }
+
+    // Foreign key filter: show searchable Autocomplete so users can filter by related rows
+    const fk = (schema[selectedTable]?.foreignKeys || []).find(
+      (fk) => fk.columnName === col.name
+    );
+    if (fk) {
+      const rawOpts = foreignKeyOptions[col.name];
+      const opts = Array.isArray(rawOpts) ? rawOpts : [];
+      const valKey = fk.foreignColumn || fk.foreign_column || "id";
+
+      if (rawOpts === undefined) {
+        return (
+          <Box display={"flex"} gap={1} width="100%" key={col.name}>
+            <TextField
+              select
+              size="small"
+              value={filters[col.name]?.op ?? "eq"}
+              onChange={(e) =>
+                setFilters((f) => ({
+                  ...f,
+                  [col.name]: { ...(f[col.name] || {}), op: e.target.value },
+                }))
+              }
+              sx={{ width: 120 }}
+            >
+              {OPERATORS.map((o) => (
+                <MenuItem key={o.value} value={o.value}>
+                  {o.label}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField fullWidth size="small" label={col.name} value={filters[col.name]?.val ?? ""} disabled helperText="Loading..." />
+          </Box>
+        );
+      }
+
+      if (opts.length === 0) {
+        return (
+          <Box display={"flex"} gap={1} width="100%" key={col.name}>
+            <TextField
+              select
+              size="small"
+              value={filters[col.name]?.op ?? "eq"}
+              onChange={(e) =>
+                setFilters((f) => ({
+                  ...f,
+                  [col.name]: { ...(f[col.name] || {}), op: e.target.value },
+                }))
+              }
+              sx={{ width: 120 }}
+            >
+              {OPERATORS.map((o) => (
+                <MenuItem key={o.value} value={o.value}>
+                  {o.label}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField fullWidth size="small" label={col.name} value={filters[col.name]?.val ?? ""} disabled helperText="No options" />
+          </Box>
+        );
+      }
+
+      const loading = rawOpts === undefined;
+      const selectedOption = opts.find((r) => String(r[valKey] ?? r[Object.keys(r || {})[0]] ?? "") === String(filters[col.name]?.val ?? "")) || null;
+
+      return (
+        <Box display={"flex"} gap={1} width="100%" key={col.name}>
+          <TextField
+            select
+            size="small"
+            value={filters[col.name]?.op ?? "eq"}
+            onChange={(e) =>
+              setFilters((f) => ({
+                ...f,
+                [col.name]: { ...(f[col.name] || {}), op: e.target.value },
+              }))
+            }
+            sx={{ width: 120 }}
+          >
+            {OPERATORS.map((o) => (
+              <MenuItem key={o.value} value={o.value}>
+                {o.label}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          <Autocomplete
+            size="small"
+            options={opts}
+            loading={loading}
+            noOptionsText={loading ? 'Loading...' : 'No options'}
+            getOptionLabel={(row) => {
+              const primary = row[valKey] ?? row[Object.keys(row || {})[0]] ?? '';
+              const summary = formatRowSummary(row, valKey);
+              return primary ? (summary ? `${primary} — ${summary}` : String(primary)) : JSON.stringify(row);
+            }}
+            filterOptions={(options, state) => {
+              const q = state.inputValue.toLowerCase();
+              return options.filter((r) => {
+                const primary = String(r[valKey] ?? Object.values(r || {})[0] ?? '').toLowerCase();
+                if (primary.includes(q)) return true;
+                return Object.values(r || {}).some((v) => String(v ?? '').toLowerCase().includes(q));
+              });
+            }}
+            value={selectedOption}
+            onChange={(e, newVal) => {
+              const v = newVal ? (newVal[valKey] ?? newVal[Object.keys(newVal || {})[0]] ?? '') : '';
+              setFilters((f) => ({ ...(f || {}), [col.name]: { ...(f[col.name] || {}), val: v } }));
+            }}
+            isOptionEqualToValue={(opt, valOpt) => {
+              const ov = opt ? (opt[valKey] ?? opt[Object.keys(opt || {})[0]] ?? '') : '';
+              const vv = valOpt ? (valOpt[valKey] ?? valOpt[Object.keys(valOpt || {})[0]] ?? '') : '';
+              return String(ov) === String(vv);
+            }}
+            renderOption={(props, row) => (
+              <li {...props}>
+                <Tooltip title={<pre style={{whiteSpace: 'pre-wrap', margin: 0}}>{JSON.stringify(row, null, 2)}</pre>} placement="right">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                    <Typography variant="body2">{String(row[valKey] ?? Object.values(row || {})[0] ?? '')}</Typography>
+                    {formatRowSummary(row, valKey) ? <Typography variant="caption" color="text.secondary">{formatRowSummary(row, valKey)}</Typography> : null}
+                  </Box>
+                </Tooltip>
+              </li>
+            )}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                fullWidth
+                size="small"
+                InputProps={{
+                  ...params.InputProps,
+                  endAdornment: (
+                    <>
+                      {loading ? <CircularProgress size={16} /> : null}
+                      {params.InputProps.endAdornment}
+                    </>
+                  ),
+                }}
+              />
+            )}
+            sx={{ flex: 1 }}
+          />
+        </Box>
+      );
+    }
+
     if (
       [
         "int",
@@ -697,151 +860,135 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
     return colors[method] || "default";
   };
 
-  const AdditionalFiltersToggle = () => (
-    <>
-      <Grid item xs={12} sx={{ mt: 1 }}>
-        <Button size="small" onClick={() => setFiltersCollapsed((s) => !s)}>
-          {filtersCollapsed ? "Show additional filters" : "Hide additional filters"}
-        </Button>
-      </Grid>
+  const AdditionalFiltersToggle = () => {
+    if (!schema || !selectedTable) return null;
+    return (
+      <Grid container spacing={2} sx={{ mt: 1 }}>
+        <Grid item xs={12}>
+          <Button size="small" onClick={() => setFiltersCollapsed((s) => !s)}>
+            {filtersCollapsed ? "Show additional filters" : "Hide additional filters"}
+          </Button>
+        </Grid>
 
-      <Collapse in={!filtersCollapsed}>
-        <Box display={"flex"} flexWrap={"wrap"} gap={1} mb={2} mt={1}>
-          {/* Show filters for referenced table and join table columns for cross-table endpoints */}
-          {(() => {
-            // Detect cross-table endpoint pattern and capture referenced table, fk column, param name, and target table
-            const crossTableMatch =
-              endpoint?.path &&
-              endpoint.path.match(
-                /\/([a-zA-Z0-9_]+)\/by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)\/([a-zA-Z0-9_]+)/
-              );
-            if (crossTableMatch && schema) {
-              const refTable = crossTableMatch[1]; // e.g., orders
-              const fkCol = crossTableMatch[2]; // e.g., order_id
-              const paramName = crossTableMatch[3]; // e.g., order_id (path param)
-              const targetTable = crossTableMatch[4]; // e.g., products
-              // Ensure fk column object
-              let fkColObj = schema[refTable]?.columns?.find(
-                (c) => c.name === fkCol
-              );
-              // Find join table by looking for a table with both FKs
-              let joinTable = Object.keys(schema).find((t) => {
-                const fks = schema[t]?.foreignKeys || [];
+        <Grid item xs={12}>
+          <Collapse in={!filtersCollapsed}>
+            <Grid container spacing={1}>
+              {/* Show filters for referenced table and join table columns for cross-table endpoints */}
+              {(() => {
+                // Detect cross-table endpoint pattern and capture referenced table, fk column, param name, and target table
+                const crossTableMatch =
+                  endpoint?.path &&
+                  endpoint.path.match(
+                    /\/([a-zA-Z0-9_]+)\/by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)\/([a-zA-Z0-9_]+)/
+                  );
+                if (crossTableMatch && schema) {
+                  const refTable = crossTableMatch[1]; // e.g., orders
+                  const fkCol = crossTableMatch[2]; // e.g., order_id
+                  const paramName = crossTableMatch[3]; // e.g., order_id (path param)
+                  const targetTable = crossTableMatch[4]; // e.g., products
+                  // Ensure fk column object
+                  let fkColObj = schema[refTable]?.columns?.find(
+                    (c) => c.name === fkCol
+                  );
+                  // Find join table by looking for a table with both FKs
+                  let joinTable = Object.keys(schema).find((t) => {
+                    const fks = schema[t]?.foreignKeys || [];
+                    return (
+                      fks.some(
+                        (fk) =>
+                          fk.columnName === fkCol && fk.foreignTable === refTable
+                      ) && fks.some((fk) => fk.foreignTable === targetTable)
+                    );
+                  });
+                  // Always include referenced table columns
+                  const refCols = schema[refTable]?.columns || [];
+                  // If join table found, include its columns except fkCol
+                  let joinCols = [];
+                  if (joinTable) {
+                    joinCols = (schema[joinTable]?.columns || []).filter(
+                      (c) => c.name !== fkCol
+                    );
+                  } else {
+                    joinCols = (schema[targetTable]?.columns || []).filter(
+                      (c) => c.name !== fkCol
+                    );
+                  }
+                  // Remove duplicates by name
+                  const seen = new Set();
+                  const allCols = [...refCols, ...joinCols].filter((c) => {
+                    if (seen.has(c.name)) return false;
+                    seen.add(c.name);
+                    return true;
+                  });
+                  // Always include fkCol as filter if not present
+                  if (fkColObj && !allCols.some((c) => c.name === fkCol)) {
+                    allCols.unshift(fkColObj);
+                  }
+                  // If still no columns, fallback to showing all columns from referenced and target table
+                  if (allCols.length === 0) {
+                    const fallbackCols = [
+                      ...(schema[refTable]?.columns || []),
+                      ...(schema[targetTable]?.columns || []),
+                    ].filter((c) => c.name !== fkCol);
+                    return fallbackCols
+                      .filter((c) => !(c.name in (pathParams || {})))
+                      .map((c) => (
+                        <Grid item xs={12} md={6} key={c.name}>
+                          {renderFilterField(c)}
+                        </Grid>
+                      ));
+                  }
+                  // Render filter fields for all columns
+                  return allCols
+                    .filter((c) => !(c.name in (pathParams || {})))
+                    .map((c) => (
+                      <Grid item xs={12} md={6} key={c.name}>
+                        {renderFilterField(c)}
+                      </Grid>
+                    ));
+                }
+                // Single-table GET: show only columns for this table except the FK used in the endpoint
+                const fkMatch = endpoint?.path?.match(
+                  /by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)/
+                );
+                let excludeCol = fkMatch ? fkMatch[1] : null;
                 return (
-                  fks.some(
-                    (fk) =>
-                      fk.columnName === fkCol && fk.foreignTable === refTable
-                  ) && fks.some((fk) => fk.foreignTable === targetTable)
+                  schema &&
+                  selectedTable &&
+                  (schema[selectedTable]?.columns || [])
+                    .filter(
+                      (c) =>
+                        c.name !== excludeCol && !(c.name in (pathParams || {}))
+                    )
+                    .map((c) => (
+                      <Grid item xs={12} md={6} key={c.name}>
+                        {renderFilterField(c)}
+                      </Grid>
+                    ))
                 );
-              });
-              // Always include referenced table columns
-              const refCols = schema[refTable]?.columns || [];
-              // If join table found, include its columns except fkCol
-              let joinCols = [];
-              if (joinTable) {
-                joinCols = (schema[joinTable]?.columns || []).filter(
-                  (c) => c.name !== fkCol
-                );
-              } else {
-                joinCols = (schema[targetTable]?.columns || []).filter(
-                  (c) => c.name !== fkCol
-                );
-              }
-              // Remove duplicates by name
-              const seen = new Set();
-              const allCols = [...refCols, ...joinCols].filter((c) => {
-                if (seen.has(c.name)) return false;
-                seen.add(c.name);
-                return true;
-              });
-              // Always include fkCol as filter if not present
-              if (fkColObj && !allCols.some((c) => c.name === fkCol)) {
-                allCols.unshift(fkColObj);
-              }
-              // If still no columns, fallback to showing all columns from referenced and target table
-              if (allCols.length === 0) {
-                const fallbackCols = [
-                  ...(schema[refTable]?.columns || []),
-                  ...(schema[targetTable]?.columns || []),
-                ].filter((c) => c.name !== fkCol);
-                return fallbackCols
-                  .filter((c) => !(c.name in (pathParams || {})))
-                  .map(renderFilterField);
-              }
-              // Render filter fields for all columns
-              return allCols
-                .filter((c) => !(c.name in (pathParams || {})))
-                .map(renderFilterField);
-            }
-            // Single-table GET: show only columns for this table except the FK used in the endpoint
-            const fkMatch = endpoint?.path?.match(
-              /by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)/
-            );
-            let excludeCol = fkMatch ? fkMatch[1] : null;
-            return (
-              schema &&
-              selectedTable &&
-              (schema[selectedTable]?.columns || [])
-                .filter(
-                  (c) =>
-                    c.name !== excludeCol && !(c.name in (pathParams || {}))
-                )
-                .map(renderFilterField)
-            );
-          })()}
-        </Box>
+              })()}
 
-        {operation === "GET" && (
-          <Box display={'flex'} flexDirection={'column'} gap={'16px'} sx={{ mt: 1, width: '100%' }}>
-            <TextField
-              select
-              fullWidth
-              size="small"
-              label="orderBy"
-              value={orderBy}
-              onChange={(e) => setOrderBy(e.target.value)}
-              helperText="Select column to sort by"
-            >
-              {(schema[selectedTable]?.columns || []).map((c) => (
-                <MenuItem key={c.name} value={c.name}>
-                  {c.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
-              fullWidth
-              size="small"
-              label="dir"
-              value={orderDir}
-              onChange={(e) => setOrderDir(e.target.value)}
-              helperText="ASC / DESC"
-            >
-              <MenuItem value="ASC">ASC</MenuItem>
-              <MenuItem value="DESC">DESC</MenuItem>
-            </TextField>
-            <TextField
-              fullWidth
-              size="small"
-              label="Page Size"
-              placeholder="10"
-              value={pageSize}
-              onChange={(e) => setPageSize(e.target.value)}
-            />
-            <TextField
-              fullWidth
-              size="small"
-              label="Page Number"
-              placeholder="1"
-              value={pageNumber}
-              onChange={(e) => setPageNumber(e.target.value)}
-            />
-          </Box>
-        )}
-
-      </Collapse>
-    </>
-  );
+              {operation === "GET" && (
+                <Grid container item spacing={1} sx={{ mt: 1 }}>
+                  <GetOptionsPanel
+                    columns={(schema[selectedTable]?.columns || [])}
+                    orderBy={orderBy}
+                    setOrderBy={setOrderBy}
+                    orderDir={orderDir}
+                    setOrderDir={setOrderDir}
+                    pageSize={pageSize}
+                    setPageSize={setPageSize}
+                    pageNumber={pageNumber}
+                    setPageNumber={setPageNumber}
+                  />
+                </Grid>
+              )}
+            </Grid>
+          </Collapse>
+        </Grid>
+      </Grid>
+    );
+  };
 
   if (!schema) {
     return (
@@ -867,18 +1014,18 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
         sx={{ fontFamily: "monospace", flex: 1 }}
       >
         <Chip
-          label={endpoint.method}
+          label={operation}
           size="small"
-          color={getMethodColor(endpoint.method)}
+          color={getMethodColor(operation)}
         />{" "}
-        {endpoint.path}
+        {endpoint?.path || `/${connectionId}/${selectedTable}`}
       </Typography>
       {/* Common Configuration (Test API only) */}
       {operation === "GET" || operation === "DELETE" ? (
         <>
           {/* Parameters (path params shown separately) */}
           {Object.keys(pathParams || {}).length > 0 && (
-            <>
+            <Grid container spacing={2}>
               <Grid item xs={12}>
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>
                   Parameters
@@ -905,7 +1052,7 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
                   />
                 </Grid>
               ))}
-            </>
+            </Grid>
           )}
 
           {/* Additional Filters toggle */}
@@ -915,7 +1062,10 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
         <></>
       )}
       {operation === "POST" && (
-        <Box display={"flex"} flexDirection={"column"} gap={"16px"} mt={2}>
+        <Grid container spacing={2} sx={{ mt: 2 }}>
+          <Grid item xs={12}>
+            <Typography variant="subtitle2">Request Body</Typography>
+          </Grid>
           {/* Render all columns for POST, including PK (disabled if auto-increment) and FKs as dropdowns */}
           {schema &&
             selectedTable &&
@@ -952,46 +1102,105 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
                   </Grid>
                 );
               }
-              // Foreign key dropdown
+              // Foreign key dropdown -> searchable Autocomplete
               if (fk) {
                 const rawOpts = foreignKeyOptions[col.name];
                 const opts = Array.isArray(rawOpts) ? rawOpts : [];
-                // Prefer explicit foreignColumn from schema, fall back to common keys
                 const valKey = fk.foreignColumn || fk.foreign_column || "id";
+
+                // Loading / empty states
+                if (rawOpts === undefined) {
+                  return (
+                    <Grid item xs={12} md={6} key={col.name}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label={col.name}
+                        value={bodyFields[col.name] ?? ""}
+                        disabled
+                        helperText="Loading..."
+                      />
+                    </Grid>
+                  );
+                }
+                if (opts.length === 0) {
+                  return (
+                    <Grid item xs={12} md={6} key={col.name}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label={col.name}
+                        value={bodyFields[col.name] ?? ""}
+                        disabled
+                        helperText="No options"
+                      />
+                    </Grid>
+                  );
+                }
+
+                const loading = rawOpts === undefined;
+                const selectedOption =
+                  opts.find((r) => String(r[valKey] ?? r[Object.keys(r || {})[0]] ?? "") === String(bodyFields[col.name] ?? "")) || null;
+
                 return (
                   <Grid item xs={12} md={6} key={col.name}>
-                    <TextField
-                      select
-                      fullWidth
+                    <Autocomplete
                       size="small"
-                      label={col.name}
-                      value={bodyFields[col.name] ?? ""}
-                      onChange={(e) =>
-                        setBodyFields((b) => ({
-                          ...b,
-                          [col.name]: e.target.value,
-                        }))
-                      }
-                    >
-                      <MenuItem value="">None</MenuItem>
-                      {opts.length === 0 ? (
-                        <MenuItem disabled>
-                          {rawOpts === undefined ? "Loading..." : "No options"}
-                        </MenuItem>
-                      ) : (
-                        opts.map((row, idx) => {
-                          const value =
-                            row[valKey] ?? row[Object.keys(row || {})[0]] ?? "";
-                          const label =
-                            value !== "" ? String(value) : JSON.stringify(row);
-                          return (
-                            <MenuItem key={idx} value={value}>
-                              {label}
-                            </MenuItem>
-                          );
-                        })
+                      options={opts}
+                      loading={loading}
+                      noOptionsText={loading ? 'Loading...' : 'No options'}
+                      getOptionLabel={(row) => {
+                        const primary = row[valKey] ?? row[Object.keys(row || {})[0]] ?? '';
+                        const summary = formatRowSummary(row, valKey);
+                        return primary ? (summary ? `${primary} — ${summary}` : String(primary)) : JSON.stringify(row);
+                      }}
+                      filterOptions={(options, state) => {
+                        const q = state.inputValue.toLowerCase();
+                        return options.filter((r) => {
+                          const primary = String(r[valKey] ?? Object.values(r || {})[0] ?? '').toLowerCase();
+                          if (primary.includes(q)) return true;
+                          return Object.values(r || {}).some((v) => String(v ?? '').toLowerCase().includes(q));
+                        });
+                      }}
+                      value={selectedOption}
+                      onChange={(e, newVal) => {
+                        const v = newVal ? (newVal[valKey] ?? newVal[Object.keys(newVal || {})[0]] ?? '') : '';
+                        setBodyFields((b) => ({ ...b, [col.name]: v }));
+                      }}
+                      isOptionEqualToValue={(opt, valOpt) => {
+                        const ov = opt ? (opt[valKey] ?? opt[Object.keys(opt || {})[0]] ?? '') : '';
+                        const vv = valOpt ? (valOpt[valKey] ?? valOpt[Object.keys(valOpt || {})[0]] ?? '') : '';
+                        return String(ov) === String(vv);
+                      }}
+                      renderOption={(props, row) => (
+                        <li {...props}>
+                          <Tooltip title={<pre style={{whiteSpace: 'pre-wrap', margin: 0}}>{JSON.stringify(row, null, 2)}</pre>} placement="right">
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                              <Typography variant="body2">{String(row[valKey] ?? Object.values(row || {})[0] ?? '')}</Typography>
+                              {formatRowSummary(row, valKey) ? <Typography variant="caption" color="text.secondary">{formatRowSummary(row, valKey)}</Typography> : null}
+                            </Box>
+                          </Tooltip>
+                        </li>
                       )}
-                    </TextField>
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          fullWidth
+                          size="small"
+                          label={col.name}
+                          value={bodyFields[col.name] ?? ""}
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {loading ? <CircularProgress size={16} /> : null}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
                   </Grid>
                 );
               }
@@ -1123,49 +1332,49 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
                 </Grid>
               );
             })}
-        </Box>
+        </Grid>
       )}
       {operation === "PUT" && (
-        <>
+        <Grid container spacing={2}>
           {/* Section 1: Columns to update (except PK and FKs) */}
           <Grid item xs={12}>
             <Typography variant="subtitle2">Fields to Update</Typography>
           </Grid>
-          <Box display={"flex"} flexDirection={"column"} gap={2}>
-            {schema &&
-              selectedTable &&
-              (schema[selectedTable]?.columns || []).map((col) => {
-                const pk = schema[selectedTable]?.primaryKeys?.[0];
-                const isFK = (schema[selectedTable]?.foreignKeys || []).some(
-                  (fk) => fk.columnName === col.name
-                );
-                if (col.name === pk || isFK) return null;
-                const name = (col.name || "").toLowerCase();
-                if (name.includes("password")) return null;
-                const type = (col.type || "").toLowerCase();
-                // Only allow non-PK, non-FK, non-password columns
-                return (
-                  <Grid item xs={12} md={6} key={col.name}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label={col.name}
-                      value={bodyFields[col.name] ?? ""}
-                      onChange={(e) =>
-                        setBodyFields((b) => ({
-                          ...b,
-                          [col.name]: e.target.value,
-                        }))
-                      }
-                    />
-                  </Grid>
-                );
-              })}
-          </Box>
+          {schema &&
+            selectedTable &&
+            (schema[selectedTable]?.columns || []).map((col) => {
+              const pk = schema[selectedTable]?.primaryKeys?.[0];
+              const isFK = (schema[selectedTable]?.foreignKeys || []).some(
+                (fk) => fk.columnName === col.name
+              );
+              if (col.name === pk || isFK) return null;
+              const name = (col.name || "").toLowerCase();
+              if (name.includes("password")) return null;
+              const type = (col.type || "").toLowerCase();
+              // Only allow non-PK, non-FK, non-password columns
+              return (
+                <Grid item xs={12} md={6} key={col.name}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label={col.name}
+                    value={bodyFields[col.name] ?? ""}
+                    onChange={(e) =>
+                      setBodyFields((b) => ({
+                        ...b,
+                        [col.name]: e.target.value,
+                      }))
+                    }
+                  />
+                </Grid>
+              );
+            })}
 
           {/* Section 2b: Additional WHERE filters (collapsed by default) */}
-          <AdditionalFiltersToggle />
-        </>
+          <Grid item xs={12}>
+            <AdditionalFiltersToggle />
+          </Grid>
+        </Grid>
       )}
       {/* Tab Content */}
       {/* TEST API TAB only */}

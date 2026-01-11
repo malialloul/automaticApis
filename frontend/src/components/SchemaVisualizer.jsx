@@ -35,6 +35,7 @@ import {
   listRecords,
   createRecord,
   updateRecord,
+  deleteRecord,
 } from "../services/api";
 
 const SchemaVisualizer = ({ connectionId }) => {
@@ -58,6 +59,13 @@ const SchemaVisualizer = ({ connectionId }) => {
   const [editValues, setEditValues] = React.useState({});
   const [editError, setEditError] = React.useState(null);
   const [editLoading, setEditLoading] = React.useState(false);
+
+  // Delete flow state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteTargetKey, setDeleteTargetKey] = useState(null);
+  const [deleteTargetRow, setDeleteTargetRow] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
   const tableColumns = React.useMemo(() => {
     if (!dataTable || !schema?.[dataTable]) return [];
     return schema[dataTable].columns || [];
@@ -95,7 +103,7 @@ const SchemaVisualizer = ({ connectionId }) => {
     const fkOptions = {};
     for (const fk of fks) {
       try {
-        const rows = await listRecords(connectionId, fk.foreignTable, { limit: 1000 });
+        const rows = await listRecords(connectionId, fk.foreignTable);
         fkOptions[fk.columnName] = rows;
       } catch {
         fkOptions[fk.columnName] = [];
@@ -115,11 +123,30 @@ const SchemaVisualizer = ({ connectionId }) => {
     setEditOpen(true);
   };
 
-  const openEditDialog = (row) => {
+  const openEditDialog = async (row) => {
     setEditMode("edit");
     setEditRow(row);
     setEditValues({ ...row });
     setEditError(null);
+    // Ensure FK options are loaded so the Autocomplete can show choices in edit mode
+    try {
+      const tableName = dataTable;
+      if (tableName) {
+        const fks = (schema[tableName]?.foreignKeys || []);
+        const fkOptions = {};
+        for (const fk of fks) {
+          try {
+            const rows = await listRecords(connectionId, fk.foreignTable, { limit: 1000 });
+            fkOptions[fk.columnName] = rows;
+          } catch {
+            fkOptions[fk.columnName] = [];
+          }
+        }
+        setForeignKeyOptions(fkOptions);
+      }
+    } catch (e) {
+      // ignore fetch errors
+    }
     setEditOpen(true);
   };
 
@@ -155,6 +182,44 @@ const SchemaVisualizer = ({ connectionId }) => {
       setEditError(err.response?.data?.error || err.message);
     } finally {
       setEditLoading(false);
+    }
+  };
+
+  // Delete handlers
+  const openDeleteDialog = (row) => {
+    const pk = schema[dataTable]?.primaryKeys && schema[dataTable].primaryKeys[0];
+    const key = pk ? row[pk] : null;
+    setDeleteTargetKey(key);
+    setDeleteTargetRow(row);
+    setDeleteError(null);
+    setDeleteConfirmOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteConfirmOpen(false);
+    setDeleteTargetKey(null);
+    setDeleteTargetRow(null);
+    setDeleteError(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      const pk = schema[dataTable]?.primaryKeys && schema[dataTable].primaryKeys[0];
+      if (!pk) throw new Error('Primary key not found for table');
+      const id = deleteTargetKey ?? (deleteTargetRow && deleteTargetRow[pk]);
+      if (id === undefined || id === null) throw new Error('Could not determine row id to delete');
+      await deleteRecord(connectionId, dataTable, id);
+      window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Row deleted', severity: 'success' } }));
+      closeDeleteDialog();
+      // Refresh current table data
+      fetchTableData(dataTable, { offset, orderBy, orderDir });
+    } catch (err) {
+      setDeleteError(err.response?.data?.error || err.message || String(err));
+      window.dispatchEvent(new CustomEvent('toast', { detail: { message: `Delete failed: ${err.message || err}`, severity: 'error' } }));
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -267,21 +332,11 @@ const SchemaVisualizer = ({ connectionId }) => {
 
     // Foreign key dropdown (robust to undefined / unexpected row shapes)
     const fk = (schema[dataTable]?.foreignKeys || []).find(fk => fk.columnName === col.name);
-    if (fk && editMode === "add") {
+    if (fk && (editMode === "add" || editMode === "edit")) {
       const rawOpts = foreignKeyOptions[col.name];
-      // undefined -> still loading, null/other -> treat as no options
-      if (rawOpts === undefined) {
-        return (
-          <Select {...commonProps} value={value} disabled>
-            <MenuItem value="">Loading...</MenuItem>
-          </Select>
-        );
-      }
+      const loading = rawOpts === undefined;
       const opts = Array.isArray(rawOpts) ? rawOpts : [];
       const valKey = fk.foreignColumn || fk.foreign_column || "id";
-      if (!opts || opts.length === 0) {
-        return <TextField {...commonProps} value={value} disabled helperText="No options" />;
-      }
       const selectedOption = opts.find((r) => {
         const v = r[valKey] ?? r[Object.keys(r || {})[0]] ?? "";
         return String(v) === String(value);
@@ -324,7 +379,21 @@ const SchemaVisualizer = ({ connectionId }) => {
               </Tooltip>
             </li>
           )}
-          renderInput={(params) => <TextField {...params} {...commonProps} />}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              {...commonProps}
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {loading ? <CircularProgress size={16} /> : null}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
+            />
+          )}
         />
       );
     }
@@ -738,13 +807,24 @@ const SchemaVisualizer = ({ connectionId }) => {
                       </TableCell>
                     ))}
                     <TableCell>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => openEditDialog(row)}
-                      >
-                        Edit
-                      </Button>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => openEditDialog(row)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="small"
+                          color="error"
+                          variant="outlined"
+                          onClick={() => openDeleteDialog(row)}
+                          disabled={deleteLoading && deleteTargetKey === (schema[dataTable]?.primaryKeys && schema[dataTable].primaryKeys[0] ? row[schema[dataTable].primaryKeys[0]] : undefined)}
+                        >
+                          {deleteLoading && deleteTargetKey === (schema[dataTable]?.primaryKeys && schema[dataTable].primaryKeys[0] ? row[schema[dataTable].primaryKeys[0]] : undefined) ? <CircularProgress size={16} /> : 'Delete'}
+                        </Button>
+                      </Box>
                     </TableCell>
                   </TableRow>
                 ))
@@ -793,6 +873,25 @@ const SchemaVisualizer = ({ connectionId }) => {
           </DialogActions>
         </Dialog>
       )}
+      <Dialog open={deleteConfirmOpen} onClose={closeDeleteDialog} fullWidth maxWidth="xs">
+        <DialogTitle>Confirm delete</DialogTitle>
+        <DialogContent dividers>
+          <Typography>Are you sure you want to delete this row?</Typography>
+          {deleteTargetRow ? (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="caption">Key: {String(deleteTargetKey)}</Typography>
+              <pre style={{whiteSpace: 'pre-wrap', marginTop: 8}}>{JSON.stringify(deleteTargetRow, null, 2)}</pre>
+            </Box>
+          ) : null}
+          {deleteError && <Typography color="error">{deleteError}</Typography>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeDeleteDialog} disabled={deleteLoading}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleDeleteConfirm} disabled={deleteLoading}>
+            {deleteLoading ? <CircularProgress size={16} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 };
