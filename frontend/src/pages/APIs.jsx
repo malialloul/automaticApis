@@ -38,7 +38,7 @@ const APIs = ({ connection }) => {
             connectionId={connection?.id}
             endpoint={tryItEndpoint}
             open={tryItOpen}
-            onClose={handleCloseTryIt}
+            onClose={handleCloseTryIt}  
           />
         )}
       </Drawer>

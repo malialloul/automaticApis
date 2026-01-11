@@ -23,6 +23,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Autocomplete,
   Select,
   MenuItem,
 } from "@mui/material";
@@ -63,6 +64,22 @@ const SchemaVisualizer = ({ connectionId }) => {
   }, [dataTable, schema]);
 
   const [foreignKeyOptions, setForeignKeyOptions] = useState({});
+
+  // Helper: create a short, human-friendly summary for a row returned for FK dropdowns
+  // Simplified: do not prefer specific keys; just list the first few no n-empty columns (excluding the FK value column)
+  const formatRowSummary = (row, valKey) => {
+    if (!row || typeof row !== "object") return "";
+    const pairs = [];
+    for (const k of Object.keys(row)) {
+      if (k === valKey) continue;
+      const v = row[k];
+      if (v === undefined || v === null || String(v).trim() === "") continue;
+      pairs.push(`${k}: ${String(v)}`);
+      if (pairs.length >= 3) break;
+    }
+    return pairs.join(' • ');
+  };
+
   const openAddDialog = async (tableName) => {
     if (!tableName) return;
 
@@ -248,22 +265,67 @@ const SchemaVisualizer = ({ connectionId }) => {
       return null;
     }
 
-    // Foreign key dropdown
+    // Foreign key dropdown (robust to undefined / unexpected row shapes)
     const fk = (schema[dataTable]?.foreignKeys || []).find(fk => fk.columnName === col.name);
-    if (fk && editMode === "add" && Array.isArray(foreignKeyOptions[col.name])) {
+    if (fk && editMode === "add") {
+      const rawOpts = foreignKeyOptions[col.name];
+      // undefined -> still loading, null/other -> treat as no options
+      if (rawOpts === undefined) {
+        return (
+          <Select {...commonProps} value={value} disabled>
+            <MenuItem value="">Loading...</MenuItem>
+          </Select>
+        );
+      }
+      const opts = Array.isArray(rawOpts) ? rawOpts : [];
+      const valKey = fk.foreignColumn || fk.foreign_column || "id";
+      if (!opts || opts.length === 0) {
+        return <TextField {...commonProps} value={value} disabled helperText="No options" />;
+      }
+      const selectedOption = opts.find((r) => {
+        const v = r[valKey] ?? r[Object.keys(r || {})[0]] ?? "";
+        return String(v) === String(value);
+      }) || null;
+
       return (
-        <Select
-          {...commonProps}
-          value={value}
-          onChange={(e) => handleEditChange(col.name, e.target.value)}
-        >
-          <MenuItem value="">None</MenuItem>
-          {foreignKeyOptions[col.name].map((row, idx) => (
-            <MenuItem key={idx} value={row[fk.foreignColumn]}>
-              {String(row[fk.foreignColumn])}
-            </MenuItem>
-          ))}
-        </Select>
+        <Autocomplete
+          size="small"
+          options={opts}
+          getOptionLabel={(row) => {
+            const primary = row[valKey] ?? row[Object.keys(row || {})[0]] ?? '';
+            const summary = formatRowSummary(row, valKey);
+            return primary ? (summary ? `${primary} — ${summary}` : String(primary)) : JSON.stringify(row);
+          }}
+          filterOptions={(options, state) => {
+            const q = state.inputValue.toLowerCase();
+            return options.filter((r) => {
+              const primary = String(r[valKey] ?? Object.values(r || {})[0] ?? '').toLowerCase();
+              if (primary.includes(q)) return true;
+              return Object.values(r || {}).some((v) => String(v ?? '').toLowerCase().includes(q));
+            });
+          }}
+          value={selectedOption}
+          onChange={(e, newVal) => {
+            const v = newVal ? (newVal[valKey] ?? newVal[Object.keys(newVal || {})[0]] ?? '') : '';
+            handleEditChange(col.name, v);
+          }}
+          isOptionEqualToValue={(opt, valOpt) => {
+            const ov = opt ? (opt[valKey] ?? opt[Object.keys(opt || {})[0]] ?? '') : '';
+            const vv = valOpt ? (valOpt[valKey] ?? valOpt[Object.keys(valOpt || {})[0]] ?? '') : '';
+            return String(ov) === String(vv);
+          }}
+          renderOption={(props, row) => (
+            <li {...props}>
+              <Tooltip title={<pre style={{whiteSpace: 'pre-wrap', margin: 0}}>{JSON.stringify(row, null, 2)}</pre>} placement="right">
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <Typography variant="body2">{String(row[valKey] ?? Object.values(row || {})[0] ?? '')}</Typography>
+                  {formatRowSummary(row, valKey) ? <Typography variant="caption" color="text.secondary">{formatRowSummary(row, valKey)}</Typography> : null}
+                </Box>
+              </Tooltip>
+            </li>
+          )}
+          renderInput={(params) => <TextField {...params} {...commonProps} />}
+        />
       );
     }
 
