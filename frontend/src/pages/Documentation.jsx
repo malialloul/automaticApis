@@ -1,10 +1,14 @@
 import React from 'react';
 import { Container, Paper, Typography, Box, Button } from '@mui/material';
 import SwaggerUI from 'swagger-ui-react';
-import ImplementationSnippets from '../components/ImplementationSnippets';
 import 'swagger-ui-react/swagger-ui.css';
+import { useConnection } from '../_shared/database/useConnection';
+import ImplementationSnippets from './Apis/APIsTester/ImplementationSnippets';
 
-const Documentation = ({ connection }) => {
+const Documentation = () => {
+  const {
+    currentConnection: connection,
+  } = useConnection();
   if (!connection) {
     return (
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -40,7 +44,7 @@ const Documentation = ({ connection }) => {
       </Paper>
 
       <Box sx={{ mt: 3 }}>
-        <ImplementationSnippets connectionId={connection.id} />
+        <ImplementationSnippets />
       </Box>
     </Container>
   );

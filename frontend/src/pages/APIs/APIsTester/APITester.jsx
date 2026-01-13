@@ -18,10 +18,10 @@ import {
   Tooltip,
 } from "@mui/material";
 import ReactJson from "@microlink/react-json-view";
-import { getSchema, listRecords } from "../../services/api";
-import api from "../../services/api";
-import GetOptionsPanel from "./components/GetOptionsPanel";
-import { renderColumnControl, formatRowSummary } from "../../_shared/database/utils";
+import { getSchema, listRecords } from "../../../services/api";
+import api from "../../../services/api";
+import GetOptionsPanel from "./GetOptionsPanel";
+import { renderColumnControl, formatRowSummary } from "../../../_shared/database/utils";
 
 const APITester = ({ connectionId, endpoint, open, onClose }) => {
   const [schema, setSchema] = useState(null);

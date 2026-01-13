@@ -1,7 +1,7 @@
 const express = require('express');
 const connectionManager = require('../utils/connectionManager');
 const SchemaInspector = require('../middleware/schemaInspector');
-const APIGenerator = require('../middleware/apiGenerator2');
+const APIGenerator = require('../middleware/apiGenerator');
 const SwaggerGenerator = require('../middleware/swaggerGenerator');
 
 const router = express.Router();

@@ -5,8 +5,6 @@ const morgan = require('morgan');
 const swaggerUi = require('swagger-ui-express');
 const { router: connectionsRouter, apiRouters } = require('./routes/connections');
 const autoIncrementRoute = require('./routes/autoIncrement');
-const authRouter = require('./routes/auth');
-const plansRouter = require('./routes/plans');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,9 +19,6 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Auth endpoints
-app.use('/api/auth', authRouter);
-app.use('/api/plans', plansRouter);
 
 // Connection management endpoints
 
