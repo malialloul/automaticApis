@@ -196,14 +196,15 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
     // For join tables with 2+ FKs, generate endpoints for each pair of FKs within the same table
     if (fks.length >= 2) {
       for (let i = 0; i < fks.length; i++) {
-        for (let j = 0; j < fks.length; j++) {
-          if (i === j) continue;
+        for (let j = i + 1; j < fks.length; j++) {
           const fkA = fks[i];
           const fkB = fks[j];
+          // Create a canonical path (fkA then fkB) to avoid symmetric duplicates
+          const path = `/api/${connectionId}/${tableName}/by_${fkA.columnName}/:${fkA.columnName}/by_${fkB.columnName}/:${fkB.columnName}`;
           endpoints.push({
             table: tableName,
             method: "GET",
-            path: `/api/${connectionId}/${tableName}/by_${fkA.columnName}/:${fkA.columnName}/by_${fkB.columnName}/:${fkB.columnName}`,
+            path: path,
             description: `Get ${tableName} by ${fkA.columnName} and ${fkB.columnName}`,
             params: [
               {
@@ -220,6 +221,7 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
             response: "200 OK",
             type: "REL",
             relationship: `${tableName} by ${fkA.columnName} and ${fkB.columnName}`,
+            _meta: { canonical: true },
           });
         }
       }
@@ -229,8 +231,7 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
     const fks2 = tableInfo.foreignKeys || [];
     if (fks2.length >= 1 && schema) {
       // Recursively build join paths up to 3 tables
-      const buildJoinEndpoints = (path, tables, params, depth) => {
-        if (depth > 2) return;
+      const buildJoinEndpoints = (path, tables, params) => {
         const lastTable = tables[tables.length - 1];
         const lastFks = schema[lastTable]?.foreignKeys || [];
         for (const fk of lastFks) {
@@ -265,11 +266,10 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
             newPath,
             [...tables, fk.foreignTable],
             newParams,
-            depth + 1
           );
         }
       };
-      buildJoinEndpoints(`/${tableName}`, [tableName], [], 1);
+      buildJoinEndpoints(`/${tableName}`, [tableName], []);
     }
 
     // Relationship endpoints: for each FK, generate a unique endpoint using the FK column
@@ -310,7 +310,16 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
       });
     });
 
-    return endpoints;
+    // Remove duplicate endpoints by path (keep first occurrence)
+    const unique = [];
+    const seen = new Set();
+    for (const e of endpoints) {
+      if (!seen.has(e.path)) {
+        seen.add(e.path);
+        unique.push(e);
+      }
+    }
+    return unique;
   };
 
   // Quick stats

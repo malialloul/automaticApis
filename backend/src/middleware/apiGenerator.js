@@ -109,39 +109,40 @@ class APIGenerator {
         const endpointPath = pathParts.join('/').replace(/\/+/g, '/');
         this.router.get(endpointPath, async (req, res) => {
           try {
-            // Build SQL join for the path
-            let sql = `SELECT t${joinPath.length - 1}.* FROM `;
+            // Build SELECT list and FROM/JOIN clauses (chain joins)
+            const selectList = [];
             for (let i = 0; i < joinPath.length; i++) {
-              sql += `"${joinPath[i]}" t${i}`;
-              if (i < joinPath.length - 1) {
-                const fkCol = (this.schema[joinPath[i]]?.foreignKeys || []).find(fk2 => fk2.foreignTable === joinPath[i + 1]);
-                if (fkCol) {
-                  sql += ` JOIN "${joinPath[i + 1]}" t${i + 1} ON t${i}."${fkCol.columnName}" = t${i + 1}."${fkCol.foreignColumn}"`;
-                }
+              const tbl = joinPath[i];
+              const cols = (this.schema[tbl]?.columns || []).map((c) => c.name);
+              for (const col of cols) {
+                selectList.push(`t${i}."${col}" AS t${i}__${col}`);
               }
-              if (i < joinPath.length - 1) sql += ' ';
             }
-            // WHERE clause for all FKs in the path
+
+            const qb = new QueryBuilder(joinPath[joinPath.length - 1], this.schema[joinPath[joinPath.length - 1]] || {}, this.dialect);
+
+            let sql = `SELECT ${selectList.join(', ')} FROM "${joinPath[0]}" t0`;
+            for (let i = 0; i < joinPath.length - 1; i++) {
+              const fkCol = (this.schema[joinPath[i]]?.foreignKeys || []).find(fk2 => fk2.foreignTable === joinPath[i + 1]);
+              if (!fkCol) {
+                throw new Error(`Could not find FK from ${joinPath[i]} to ${joinPath[i + 1]}`);
+              }
+              sql += ` JOIN "${joinPath[i + 1]}" t${i + 1} ON t${i}."${fkCol.columnName}" = t${i + 1}."${fkCol.foreignColumn}"`;
+            }
+
+            // WHERE clause for all FKs in the path (parameters added to qb)
             const whereClauses = [];
-            let paramIdx = 1;
             for (let i = 0; i < joinPath.length - 1; i++) {
               const fkCol = (this.schema[joinPath[i]]?.foreignKeys || []).find(fk2 => fk2.foreignTable === joinPath[i + 1]);
               if (fkCol) {
-                whereClauses.push(`t${i}."${fkCol.columnName}" = $${paramIdx++}`);
+                whereClauses.push(`t${i}."${fkCol.columnName}" = ${qb.addParam(req.params[fkCol.columnName])}`);
               }
             }
             if (whereClauses.length) {
               sql += ' WHERE ' + whereClauses.join(' AND ');
             }
-            // Collect params from req.params
-            const values = [];
-            for (let i = 0; i < joinPath.length - 1; i++) {
-              const fkCol = (this.schema[joinPath[i]]?.foreignKeys || []).find(fk2 => fk2.foreignTable === joinPath[i + 1]);
-              if (fkCol) {
-                values.push(req.params[fkCol.columnName]);
-              }
-            }
-            const result = await this.pool.query(sql, values);
+
+            const result = await this.pool.query(sql, qb.params);
             res.json(result.rows);
           } catch (error) {
             console.error(`Error in multi-join endpoint ${endpointPath}:`, error);
