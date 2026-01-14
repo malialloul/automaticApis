@@ -1,7 +1,6 @@
 import { Container, Grid, Drawer, CircularProgress } from '@mui/material';
 import EndpointExplorer from './EndpointExplorer';
 import APITester from './APIsTester/APITester';
-import ImplementationSnippets from './APIsTester/ImplementationSnippets';
 
 import React, { useState } from 'react';
 import { useConnection } from '../../_shared/database/useConnection';
@@ -52,7 +51,7 @@ const APIs = () => {
         )}
       </Drawer>
 
-      {/* Get Code Panel */}
+      {/* Get Code Panel
       <Drawer anchor="right" open={codeOpen} onClose={handleCloseCode} PaperProps={{ sx: { width: 600 } }}>
         {codeOpen && (
           <ImplementationSnippets
@@ -62,7 +61,7 @@ const APIs = () => {
             onClose={handleCloseCode}
           />
         )}
-      </Drawer>
+      </Drawer> */}
     </Container>
   );
 };

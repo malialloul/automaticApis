@@ -46,7 +46,6 @@ const HTTP_METHODS = [
 const API_TYPES = [
   { value: "ALL", label: "All" },
   { value: "CRUD", label: "CRUD" },
-  { value: "REL", label: "Relationships" },
 ];
 
 const getMethodColor = (method) => {
@@ -131,9 +130,8 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
     if (remoteEndpoints && remoteEndpoints.length) {
       const total = remoteEndpoints.length;
       const crud = remoteEndpoints.filter((e) => e.type === "CRUD").length;
-      const rel = remoteEndpoints.filter((e) => e.type === "REL").length;
       const tables = new Set(remoteEndpoints.map((e) => e.table)).size;
-      return { total, crud, rel, tables };
+      return { total, crud, tables };
     }
     if (!schema) return { total: 0, crud: 0, rel: 0, tables: 0 };
     // If only schema is available, show table count but no generated endpoints
@@ -217,7 +215,7 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
   };
 
   // Try a sample cross-table call by injecting sample path params (replaces `:param` tokens with `1`)
-  const trySampleCrossTable = (endpoint) => {
+  const trySampleEndpoint = (endpoint) => {
     if (!endpoint || !endpoint.path) return;
     const samplePath = endpoint.path.replace(/:([a-zA-Z0-9_]+)/g, "1");
     const sampleParams = {};
@@ -591,7 +589,7 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
                       }
                     }
                   } catch (e) {
-                    console.log(e);
+                    console.error(e);
                   }
                 };
                 return (
@@ -910,7 +908,7 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
                     sx={{ p: 1, bgcolor: bgPanel, color: textColor, mb: 2 }}
                   >
                     <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
-                      <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => trySampleCrossTable(sidebar.endpoint)}>
+                      <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => trySampleEndpoint(sidebar.endpoint)}>
                         Try sample
                       </Button>
                     </Box>
