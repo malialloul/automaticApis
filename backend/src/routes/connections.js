@@ -28,12 +28,22 @@ function getDefaultPort(type) {
  */
 router.post('/test', async (req, res) => {
   try {
-    const { host, port, database, user, password, type } = req.body;
+    const { host, port, database, user, password, type, uri, encrypt } = req.body;
 
-    if (!host || !database || !user || !password) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: host, database, user, password' 
-      });
+    // For MongoDB: either provide a URI or host + database; user/password are optional
+    if ((type || 'postgres').toLowerCase() === 'mongodb') {
+      if (!uri && !host) {
+        return res.status(400).json({ error: 'Missing required fields: host or uri' });
+      }
+      if (!uri && !database) {
+        return res.status(400).json({ error: 'Missing required fields: database' });
+      }
+    } else {
+      if (!host || !database || !user || !password) {
+        return res.status(400).json({ 
+          error: 'Missing required fields: host, database, user, password' 
+        });
+      }
     }
 
     const result = await connectionManager.testConnection({
@@ -43,12 +53,16 @@ router.post('/test', async (req, res) => {
       user,
       password,
       type,
+      uri,
+      encrypt,
     });
 
+    // Include any additional info returned by the driver (e.g., MongoDB ping result)
     res.json({ 
       success: true, 
       message: 'Connection successful',
-      timestamp: result.timestamp
+      timestamp: result.timestamp,
+      info: result.info || null,
     });
   } catch (error) {
     console.error('Connection test failed:', error);
@@ -66,12 +80,21 @@ router.post('/test', async (req, res) => {
 router.post('/:id/introspect', async (req, res) => {
   try {
     const connectionId = req.params.id;
-    const { host, port, database, user, password, type } = req.body;
+    const { host, port, database, user, password, type, uri, encrypt } = req.body;
 
-    if (!host || !database || !user || !password) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: host, database, user, password' 
-      });
+    if ((type || 'postgres').toLowerCase() === 'mongodb') {
+      if (!uri && !host) {
+        return res.status(400).json({ error: 'Missing required fields: host or uri' });
+      }
+      if (!uri && !database) {
+        return res.status(400).json({ error: 'Missing required fields: database' });
+      }
+    } else {
+      if (!host || !database || !user || !password) {
+        return res.status(400).json({ 
+          error: 'Missing required fields: host, database, user, password' 
+        });
+      }
     }
 
     // Get or create connection pool
@@ -82,6 +105,8 @@ router.post('/:id/introspect', async (req, res) => {
       user,
       password,
       type,
+      uri,
+      encrypt,
     });
 
     const info = connectionManager.getInfo(connectionId);
@@ -221,6 +246,43 @@ router.get('/', (req, res) => {
   }));
 
   res.json(details);
+});
+
+/**
+ * GET /api/connections/:id/endpoints
+ * Return generated endpoints and schema for a connection (debug helper)
+ */
+router.get('/:id/endpoints', (req, res) => {
+  const connectionId = req.params.id;
+  const apiRouter = apiRouters.get(connectionId);
+  const schema = schemaCache.get(connectionId);
+
+  if (!apiRouter) {
+    return res.status(404).json({ error: `No API found for connection '${connectionId}'. Please introspect the database first.` });
+  }
+
+  const routes = [];
+  // Express Router keeps layers with 'route' property for endpoints
+  const stack = apiRouter.stack || [];
+  for (const layer of stack) {
+    if (layer.route && layer.route.path) {
+      const methods = Object.keys(layer.route.methods || {}).map(m => m.toUpperCase());
+      routes.push({ path: layer.route.path, methods });
+    } else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
+      // nested router
+      for (const nested of layer.handle.stack) {
+        if (nested.route && nested.route.path) {
+          const methods = Object.keys(nested.route.methods || {}).map(m => m.toUpperCase());
+          routes.push({ path: nested.route.path, methods });
+        }
+      }
+    }
+  }
+
+  // dedupe and sort
+  const unique = Array.from(new Map(routes.map(r => [r.path + '|' + r.methods.join(','), r])).values()).sort((a, b) => a.path.localeCompare(b.path));
+
+  res.json({ connectionId, tables: Object.keys(schema || {}), endpoints: unique });
 });
 
 module.exports = { router, apiRouters, schemaCache, apiGenerators };

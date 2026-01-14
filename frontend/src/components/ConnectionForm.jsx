@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   TextField,
@@ -12,12 +12,14 @@ import {
   Select,
   InputLabel,
   FormControl,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import { useForm } from 'react-hook-form';
 import { testConnection, introspectConnection } from '../services/api';
 
 const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
-  const { register, handleSubmit, formState: { errors } } = useForm({
+  const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm({
     defaultValues: {
       id: '',
       host: 'localhost',
@@ -26,19 +28,33 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
       user: 'postgres',
       password: '',
       type: 'postgres',
+      uri: '',
+      encrypt: false,
     },
   });
+
+  const type = watch('type');
+  const uri = watch('uri');
+  const encrypt = watch('encrypt');
+
+  useEffect(() => {
+    const portMap = { postgres: 5432, mysql: 3306, mongodb: 27017, mssql: 1433, oracle: 1521 };
+    setValue('port', portMap[type] || 5432);
+    // clear auth for MongoDB by default
+    if (type === 'mongodb') {
+      setValue('user', '');
+      setValue('password', '');
+    }
+  }, [type, setValue]);
 
   const [testing, setTesting] = useState(false);
   const [introspecting, setIntrospecting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [error, setError] = useState(null);
-
   const onTest = async (data) => {
     setTesting(true);
     setError(null);
     setTestResult(null);
-
     try {
       const result = await testConnection({
         host: data.host,
@@ -47,6 +63,8 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
         user: data.user,
         password: data.password,
         type: data.type,
+        uri: data.uri,
+        encrypt: data.encrypt,
       });
       setTestResult(result);
     } catch (err) {
@@ -70,17 +88,21 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
         user: data.user,
         password: data.password,
         type: data.type,
+        uri: data.uri,
+        encrypt: data.encrypt,
       });
 
       const connection = {
         id: connectionId,
-        name: data.database,
+        name: data.database || data.uri || connectionId,
         host: data.host,
         port: data.port,
         database: data.database,
         user: data.user,
         password: data.password,
         type: data.type,
+        uri: data.uri,
+        encrypt: data.encrypt,
         introspectedAt: new Date().toISOString(),
       };
 
@@ -114,7 +136,13 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
               >
                 <MenuItem value="postgres">PostgreSQL</MenuItem>
                 <MenuItem value="mysql">MySQL</MenuItem>
+                <MenuItem value="mongodb">MongoDB</MenuItem>
+                <MenuItem value="mssql">MS SQL Server</MenuItem>
+                <MenuItem value="oracle">Oracle</MenuItem>
               </Select>
+
+              {/* Derived validation flags */}
+              {/** compute flags for conditional validation **/}
             </FormControl>
           </Grid>
           <Grid item xs={12} md={6}>
@@ -127,11 +155,23 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
           </Grid>
           
 
+          {/* MongoDB URI (optional) */}
+          {type === 'mongodb' && (
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="MongoDB URI (optional)"
+                {...register('uri')}
+                helperText="e.g., mongodb://user:pass@host:27017/dbname"
+              />
+            </Grid>
+          )}
+
           <Grid item xs={12} md={8}>
             <TextField
               fullWidth
               label="Host"
-              {...register('host', { required: 'Host is required' })}
+              {...register('host', { required: !(type === 'mongodb' && uri) ? 'Host is required' : false })}
               error={!!errors.host}
               helperText={errors.host?.message}
             />
@@ -152,7 +192,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
             <TextField
               fullWidth
               label="Database"
-              {...register('database', { required: 'Database is required' })}
+              {...register('database', { required: !(type === 'mongodb' && uri) ? 'Database is required' : false })}
               error={!!errors.database}
               helperText={errors.database?.message}
             />
@@ -162,7 +202,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
             <TextField
               fullWidth
               label="User"
-              {...register('user', { required: 'User is required' })}
+              {...register('user', { required: type !== 'mongodb' ? 'User is required' : false })}
               error={!!errors.user}
               helperText={errors.user?.message}
             />
@@ -173,11 +213,18 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
               fullWidth
               label="Password"
               type="password"
-              {...register('password', { required: 'Password is required' })}
+              {...register('password', { required: type !== 'mongodb' ? 'Password is required' : false })}
               error={!!errors.password}
               helperText={errors.password?.message}
             />
           </Grid>
+
+          {/* MSSQL specific options */}
+          {type === 'mssql' && (
+            <Grid item xs={12}>
+              <FormControlLabel control={<Checkbox {...register('encrypt')} />} label="Encrypt (MSSQL)" />
+            </Grid>
+          )}
         </Grid>
 
         {error && (
@@ -188,7 +235,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
 
         {testResult && (
           <Alert severity="success" sx={{ mt: 2 }}>
-            Connection successful! Server time: {new Date(testResult.timestamp).toLocaleString()}
+            Connection successful! {testResult.timestamp ? `Server time: ${new Date(testResult.timestamp).toLocaleString()}` : `Result: ${JSON.stringify(testResult.info)}`}
           </Alert>
         )}
 
