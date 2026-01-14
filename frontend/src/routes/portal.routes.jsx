@@ -4,7 +4,7 @@ import { useConnection } from "../_shared/database/useConnection"
 import DashboardPage from "../pages/Dashboard/Dashboard"
 import Schema from "../pages/Schema/Schema"
 import ERDiagramViewer from "../pages/ErDiagram/ERDiagramViewer"
-import APIs from "../pages/Apis/APIs"
+import APIs from "../pages/APIs/APIs"
 
 export const PortalRoutesPaths = {
     DASHBOARD: "/dashboard",

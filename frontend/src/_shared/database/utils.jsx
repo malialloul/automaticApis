@@ -1,4 +1,30 @@
+import React from 'react';
 import { Box, TextField, MenuItem, Select, Autocomplete, Tooltip, Typography, CircularProgress } from '@mui/material';
+
+// Memoized TextField wrapper to avoid remounts and preserve focus
+const MemoTextField = React.memo(({ fullWidth = true, size = 'small', type, label, value, onChange, disabled = false, InputLabelProps, helperText }) => {
+  const inputRef = React.useRef(null);
+  React.useEffect(() => {
+    console.debug(`MemoTextField mounted: ${label}`);
+    return () => console.debug(`MemoTextField unmounted: ${label}`);
+  }, [label]);
+  console.debug(`MemoTextField render: ${label}`, { value });
+
+  return (
+    <TextField
+      fullWidth={fullWidth}
+      size={size}
+      type={type}
+      label={label}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      InputLabelProps={InputLabelProps}
+      helperText={helperText}
+      inputRef={inputRef}
+    />
+  );
+}, (prev, next) => prev.value === next.value && prev.disabled === next.disabled);
 
 export function formatRowSummary(row, valKey) {
   if (!row || typeof row !== 'object') return '';
@@ -53,7 +79,7 @@ export function renderColumnControl({
 
     if (rawOpts === undefined) {
       return (
-        <TextField
+        <MemoTextField
           fullWidth={fullWidth}
           size={size}
           label={col.name}
@@ -66,7 +92,7 @@ export function renderColumnControl({
 
     if (opts.length === 0) {
       return (
-        <TextField
+        <MemoTextField
           fullWidth={fullWidth}
           size={size}
           label={col.name}
@@ -122,11 +148,12 @@ export function renderColumnControl({
           );
         }}
         renderInput={(params) => (
-          <TextField
+          <MemoTextField
             {...params}
             fullWidth={fullWidth}
             size={size}
             label={col.name}
+            InputLabelProps={params.InputLabelProps}
             InputProps={{
               ...params.InputProps,
               endAdornment: (
@@ -145,17 +172,17 @@ export function renderColumnControl({
 
   // Password
   if (colName.toLowerCase().includes('password')) {
-    return <TextField fullWidth={fullWidth} size={size} type="password" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
+    return <MemoTextField fullWidth={fullWidth} size={size} type="password" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
   }
 
   // Email
   if (colName.toLowerCase().includes('email')) {
-    return <TextField fullWidth={fullWidth} size={size} type="email" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
+    return <MemoTextField fullWidth={fullWidth} size={size} type="email" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
   }
 
   // Number
   if (["int", "integer", "bigint", "smallint", "numeric", "decimal", "float", "double", "real"].some((t) => type.includes(t))) {
-    return <TextField fullWidth={fullWidth} size={size} type="number" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
+    return <MemoTextField fullWidth={fullWidth} size={size} type="number" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
   }
 
   // Boolean
@@ -185,9 +212,9 @@ export function renderColumnControl({
   // Date / datetime
   if (["date", "timestamp", "datetime"].some((t) => type.includes(t))) {
     // let caller decide between date-only or datetime-local if needed
-    return <TextField fullWidth={fullWidth} size={size} type="datetime-local" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} InputLabelProps={{ shrink: true }} disabled={disabled} />;
+    return <MemoTextField fullWidth={fullWidth} size={size} type="datetime-local" label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} InputLabelProps={{ shrink: true }} disabled={disabled} />;
   }
 
   // Default text
-  return <TextField fullWidth={fullWidth} size={size} label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
+  return <MemoTextField fullWidth={fullWidth} size={size} label={col.name} value={value ?? ''} onChange={(e) => onChange && onChange(e.target.value)} disabled={disabled} />;
 }
