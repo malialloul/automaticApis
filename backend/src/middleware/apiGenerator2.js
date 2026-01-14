@@ -1,5 +1,6 @@
 const express = require('express');
 const QueryBuilder = require('./queryBuilder');
+const { ObjectId } = require('mongodb');
 
 class APIGenerator {
       // For each join table with multiple FKs, add endpoints under each referenced table to get related records by the other FK
@@ -187,6 +188,135 @@ class APIGenerator {
   generateTableRoutes(tableName, tableSchema) {
     const basePath = `/${tableName}`;
 
+    // MongoDB-specific handlers
+    if (this.dialect === 'mongodb') {
+      const coll = this.pool.db.collection(tableName);
+
+      this.router.get(basePath, async (req, res) => {
+        try {
+          const { limit = 100, offset = 0, ...filters } = req.query;
+          const mongoFilter = {};
+          for (const [k, v] of Object.entries(filters || {})) {
+            // try to parse JSON values
+            let val = v;
+            try { val = JSON.parse(v); } catch (e) { val = v; }
+            // convert possible ObjectId fields
+            if (k === '_id' || k.endsWith('_id')) {
+              try { mongoFilter[k] = new ObjectId(val); } catch (e) { mongoFilter[k] = val; }
+            } else {
+              mongoFilter[k] = val;
+            }
+          }
+          const docs = await coll.find(mongoFilter).skip(parseInt(offset, 10)).limit(parseInt(limit, 10)).toArray();
+          res.json(docs);
+        } catch (error) {
+          console.error(`Error listing ${tableName} (mongodb):`, error);
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      this.router.delete(basePath, async (req, res) => {
+        try {
+          const filters = req.query || {};
+          const mongoFilter = {};
+          for (const [k, v] of Object.entries(filters)) {
+            let val = v;
+            try { val = JSON.parse(v); } catch (e) { val = v; }
+            if (k === '_id' || k.endsWith('_id')) {
+              try { mongoFilter[k] = new ObjectId(val); } catch (e) { mongoFilter[k] = val; }
+            } else {
+              mongoFilter[k] = val;
+            }
+          }
+          const result = await coll.deleteMany(mongoFilter);
+          return res.json({ deleted: result.deletedCount });
+        } catch (error) {
+          console.error(`Error deleting ${tableName} (mongodb):`, error);
+          res.status(400).json({ error: error.message });
+        }
+      });
+
+      this.router.post(basePath, async (req, res) => {
+        try {
+          const body = req.body || {};
+          const insertRes = await coll.insertOne(body);
+          const doc = await coll.findOne({ _id: insertRes.insertedId });
+          return res.status(201).json(doc);
+        } catch (error) {
+          console.error(`Error creating ${tableName} (mongodb):`, error);
+          res.status(400).json({ error: error.message });
+        }
+      });
+
+      this.router.get(`${basePath}/:id`, async (req, res) => {
+        try {
+          const id = req.params.id;
+          let q;
+          try { q = { _id: new ObjectId(id) }; } catch (e) { q = { _id: id }; }
+          const doc = await coll.findOne(q);
+          if (!doc) return res.status(404).json({ error: 'Record not found' });
+          res.json(doc);
+        } catch (error) {
+          console.error(`Error getting ${tableName} (mongodb):`, error);
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      this.router.put(`${basePath}/:id`, async (req, res) => {
+        try {
+          const id = req.params.id;
+          let q;
+          try { q = { _id: new ObjectId(id) }; } catch (e) { q = { _id: id }; }
+          const data = req.body && req.body.data ? req.body.data : req.body;
+          const updateRes = await coll.findOneAndUpdate(q, { $set: data }, { returnDocument: 'after' });
+          if (!updateRes.value) return res.status(404).json({ error: 'Record not found' });
+          res.json(updateRes.value);
+        } catch (error) {
+          console.error(`Error updating ${tableName} (mongodb):`, error);
+          res.status(400).json({ error: error.message });
+        }
+      });
+
+      this.router.delete(`${basePath}/:id`, async (req, res) => {
+        try {
+          const id = req.params.id;
+          let q;
+          try { q = { _id: new ObjectId(id) }; } catch (e) { q = { _id: id }; }
+          const del = await coll.findOneAndDelete(q);
+          if (!del.value) return res.status(404).json({ error: 'Record not found' });
+          return res.json({ message: 'Record deleted', data: del.value });
+        } catch (error) {
+          console.error(`Error deleting ${tableName} (mongodb):`, error);
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // Mongo relationships: based on schema.foreignKeys heuristics
+      for (const fk of tableSchema.foreignKeys || []) {
+        const relatedTable = fk.foreignTable;
+        const fkCol = fk.columnName;
+        this.router.get(`${basePath}/by_${fkCol}/:${fkCol}/${relatedTable}`, async (req, res) => {
+          try {
+            const val = req.params[fkCol];
+            let q;
+            try { q = { [fkCol]: new ObjectId(val) }; } catch (e) { q = { [fkCol]: val }; }
+            const rows = await coll.find(q).toArray();
+            res.json(rows);
+          } catch (error) {
+            console.error(`Error getting related ${relatedTable} by ${fkCol} (mongodb):`, error);
+            res.status(500).json({ error: error.message });
+          }
+        });
+      }
+
+      // Skip cross-table and multi-join generation for MongoDB (heuristics only)
+      this._skippedCrossTableEndpoints = this._skippedCrossTableEndpoints || [];
+      this._skippedCrossTableEndpoints.push({ reason: 'mongodb: skipped complex SQL cross-table endpoints' });
+
+      return;
+    }
+
+    // --- existing SQL handlers follow ---
     this.router.get(basePath, async (req, res) => {
       try {
         const { limit, offset, orderBy, orderDir, ...filters } = req.query;
@@ -352,6 +482,74 @@ class APIGenerator {
   }
 
   generateRelationshipRoutes(tableName, tableSchema, basePath) {
+    // MongoDB: use collection queries based on foreign key heuristics
+    if (this.dialect === 'mongodb') {
+      const coll = this.pool.db.collection(tableName);
+      // For each FK
+      for (const fk of tableSchema.foreignKeys || []) {
+        const relatedTable = fk.foreignTable;
+        const fkCol = fk.columnName;
+        this.router.get(`${basePath}/by_${fkCol}/:${fkCol}/${relatedTable}`, async (req, res) => {
+          try {
+            const val = req.params[fkCol];
+            let q;
+            try { q = { [fkCol]: new ObjectId(val) }; } catch (e) { q = { [fkCol]: val }; }
+            const rows = await coll.find(q).toArray();
+            res.json(rows);
+          } catch (error) {
+            console.error(`Error getting related ${relatedTable} by ${fkCol} (mongodb):`, error);
+            res.status(500).json({ error: error.message });
+          }
+        });
+      }
+
+      // For each reverse FK: find documents in other collections that reference this table
+      for (const rfk of tableSchema.reverseForeignKeys || []) {
+        const relatedTable = rfk.referencingTable;
+        const refCol = rfk.referencingColumn;
+        this.router.get(`${basePath}/by_${rfk.referencedColumn}/:${rfk.referencedColumn}/${relatedTable}`, async (req, res) => {
+          try {
+            const otherColl = this.pool.db.collection(relatedTable);
+            const val = req.params[rfk.referencedColumn];
+            let q;
+            try { q = { [refCol]: new ObjectId(val) }; } catch (e) { q = { [refCol]: val }; }
+            const rows = await otherColl.find(q).toArray();
+            res.json(rows);
+          } catch (error) {
+            console.error(`Error getting related ${relatedTable} by ${rfk.referencedColumn} (mongodb):`, error);
+            res.status(500).json({ error: error.message });
+          }
+        });
+      }
+
+      // For join tables with 2+ FKs, generate endpoints for each pair of FKs within the same collection
+      const fks = tableSchema.foreignKeys || [];
+      if (fks.length >= 2) {
+        for (let i = 0; i < fks.length; i++) {
+          for (let j = 0; j < fks.length; j++) {
+            if (i === j) continue;
+            const fkA = fks[i];
+            const fkB = fks[j];
+            this.router.get(`${basePath}/by_${fkA.columnName}/:${fkA.columnName}/by_${fkB.columnName}/:${fkB.columnName}`, async (req, res) => {
+              try {
+                const q = {};
+                try { q[fkA.columnName] = new ObjectId(req.params[fkA.columnName]); } catch (e) { q[fkA.columnName] = req.params[fkA.columnName]; }
+                try { q[fkB.columnName] = new ObjectId(req.params[fkB.columnName]); } catch (e) { q[fkB.columnName] = req.params[fkB.columnName]; }
+                const rows = await coll.find(q).toArray();
+                res.json(rows);
+              } catch (error) {
+                console.error(`Error getting ${tableName} by ${fkA.columnName} and ${fkB.columnName} (mongodb):`, error);
+                res.status(500).json({ error: error.message });
+              }
+            });
+          }
+        }
+      }
+
+      return;
+    }
+
+    // Existing SQL behavior
     // For each FK, generate a unique endpoint using the FK column (existing behavior)
     for (const fk of tableSchema.foreignKeys || []) {
       const relatedTable = fk.foreignTable;
