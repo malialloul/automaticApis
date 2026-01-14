@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useContext } from "react";
 import {
   Paper,
   Typography,
@@ -33,6 +33,7 @@ import LinkIcon from "@mui/icons-material/Link";
 import { getSchema } from "../../services/api";
 import { useTheme } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
+import { AppContext } from "../../App";
 
 const HTTP_METHODS = [
   { value: "ALL", label: "All" },
@@ -62,11 +63,13 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
+  const { schema } = useContext(AppContext);
+
   const bgPanel = theme.palette.background.paper;
   const bgSidebar = theme.palette.background.default;
   const textColor = theme.palette.text.primary;
 
-  const [schema, setSchema] = useState(null);
+  const [remoteEndpoints, setRemoteEndpoints] = useState(null);
   const [search, setSearch] = useState("");
   const [expandedTable, setExpandedTable] = useState(null);
   // default to all concrete methods selected
@@ -100,242 +103,42 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
 
   useEffect(() => {
     if (!connectionId) return;
-    getSchema(connectionId)
-      .then(setSchema)
-      .catch(() => setSchema(null));
+
+    // Try fetching generated endpoints from backend; fall back to schema-derived generation
+    const fetchEndpoints = async () => {
+      try {
+        const res = await fetch(`/api/${connectionId}/__generated_endpoints`);
+        if (!res.ok) throw new Error('no backend endpoints');
+        const data = await res.json();
+        if (data && data.endpoints) {
+          // store fetched endpoints on a ref-like state
+          setRemoteEndpoints(data.endpoints || []);
+          return;
+        }
+      } catch (e) {
+        // fallback to local generation
+      }
+    };
+
+    fetchEndpoints();
   }, [connectionId]);
 
   const baseUrl = window.location.origin;
 
-  // Generate endpoints for a table
-  const generateEndpoints = (tableName, tableInfo) => {
-    const fks = tableInfo.foreignKeys || [];
-    const endpoints = [
-      {
-        table: tableName,
-        method: "GET",
-        path: `/api/${connectionId}/${tableName}`,
-        description: `List all ${tableName} with pagination`,
-        params: [
-          { name: "limit", type: "query", desc: "Max results" },
-          { name: "offset", type: "query", desc: "Offset for pagination" },
-          { name: "orderBy", type: "query", desc: "Order by column" },
-          { name: "filter", type: "query", desc: "Filter conditions" },
-        ],
-        response: "200 OK",
-        type: "CRUD",
-      },
-      {
-        table: tableName,
-        method: "GET",
-        path: `/api/${connectionId}/${tableName}/:id`,
-        description: `Get single ${tableName} by ID`,
-        params: [{ name: "id", type: "path", desc: "Primary key" }],
-        response: "200 OK / 404 Not Found",
-        type: "CRUD",
-      },
-      {
-        table: tableName,
-        method: "POST",
-        path: `/api/${connectionId}/${tableName}`,
-        description: `Create new ${tableName}`,
-        params: [{ name: "body", type: "body", desc: "Request body" }],
-        response: "201 Created",
-        type: "CRUD",
-      },
-      {
-        table: tableName,
-        method: "PUT",
-        path: `/api/${connectionId}/${tableName}/:id`,
-        description: `Update ${tableName}`,
-        params: [
-          { name: "id", type: "path", desc: "Primary key" },
-          { name: "body", type: "body", desc: "Request body" },
-        ],
-        response: "200 OK",
-        type: "CRUD",
-      },
-      {
-        table: tableName,
-        method: "DELETE",
-        path: `/api/${connectionId}/${tableName}/:id`,
-        description: `Delete ${tableName}`,
-        params: [{ name: "id", type: "path", desc: "Primary key" }],
-        response: "204 No Content",
-        type: "CRUD",
-      },
-    ];
-    // For join tables with 2+ FKs, add endpoints under each referenced table to get related records by the other FK
-    if (fks.length >= 2 && schema) {
-      for (let i = 0; i < fks.length; i++) {
-        for (let j = 0; j < fks.length; j++) {
-          if (i === j) continue;
-          const fkA = fks[i];
-          const fkB = fks[j];
-          // Endpoint under fkA.foreignTable: /orders/by_order_id/:order_id/products
-          endpoints.push({
-            table: fkA.foreignTable,
-            method: "GET",
-            path: `/api/${connectionId}/${fkA.foreignTable}/by_${fkA.columnName}/:${fkA.columnName}/${fkB.foreignTable}`,
-            description: `Get all ${fkB.foreignTable} for ${fkA.columnName} via ${tableName}`,
-            params: [
-              {
-                name: fkA.columnName,
-                type: "path",
-                desc: `Foreign key (${fkA.columnName})`,
-              },
-            ],
-            response: `200 OK ({ ${fkA.columnName}, ${fkB.foreignTable}: [...] })`,
-            type: "REL",
-            relationship: `${fkA.columnName} → ${fkB.foreignTable} via ${tableName}`,
-          });
-        }
-      }
-    }
-
-    // For join tables with 2+ FKs, generate endpoints for each pair of FKs within the same table
-    if (fks.length >= 2) {
-      for (let i = 0; i < fks.length; i++) {
-        for (let j = i + 1; j < fks.length; j++) {
-          const fkA = fks[i];
-          const fkB = fks[j];
-          // Create a canonical path (fkA then fkB) to avoid symmetric duplicates
-          const path = `/api/${connectionId}/${tableName}/by_${fkA.columnName}/:${fkA.columnName}/by_${fkB.columnName}/:${fkB.columnName}`;
-          endpoints.push({
-            table: tableName,
-            method: "GET",
-            path: path,
-            description: `Get ${tableName} by ${fkA.columnName} and ${fkB.columnName}`,
-            params: [
-              {
-                name: fkA.columnName,
-                type: "path",
-                desc: `Foreign key (${fkA.columnName})`,
-              },
-              {
-                name: fkB.columnName,
-                type: "path",
-                desc: `Foreign key (${fkB.columnName})`,
-              },
-            ],
-            response: "200 OK",
-            type: "REL",
-            relationship: `${tableName} by ${fkA.columnName} and ${fkB.columnName}`,
-            _meta: { canonical: true },
-          });
-        }
-      }
-    }
-
-    // Multi-join endpoints (up to 3 tables)
-    const fks2 = tableInfo.foreignKeys || [];
-    if (fks2.length >= 1 && schema) {
-      // Recursively build join paths up to 3 tables
-      const buildJoinEndpoints = (path, tables, params) => {
-        const lastTable = tables[tables.length - 1];
-        const lastFks = schema[lastTable]?.foreignKeys || [];
-        for (const fk of lastFks) {
-          if (tables.includes(fk.foreignTable)) continue;
-          const newPath = `${path}/by_${fk.columnName}/:${fk.columnName}/${fk.foreignTable}`;
-          const newParams = [
-            ...params,
-            {
-              name: fk.columnName,
-              type: "path",
-              desc: `Foreign key (${fk.columnName})`,
-            },
-            {
-              name: "joinType",
-              type: "query",
-              desc: "Join type: inner (default), left, right, full",
-            },
-          ];
-          endpoints.push({
-            table: tableName,
-            method: "GET",
-            path: `/api/${connectionId}${newPath}`,
-            description: `Multi-join: ${tables.join(" → ")} → ${fk.foreignTable
-              } (supports joinType query param)`,
-            params: newParams,
-            response: "200 OK",
-            type: "REL",
-            relationship: `Multi-join: ${tables.join(" → ")} → ${fk.foreignTable
-              }`,
-          });
-          buildJoinEndpoints(
-            newPath,
-            [...tables, fk.foreignTable],
-            newParams,
-          );
-        }
-      };
-      buildJoinEndpoints(`/${tableName}`, [tableName], []);
-    }
-
-    // Relationship endpoints: for each FK, generate a unique endpoint using the FK column
-    tableInfo.foreignKeys?.forEach((fk) => {
-      endpoints.push({
-        table: tableName,
-        method: "GET",
-        path: `/api/${connectionId}/${tableName}/by_${fk.columnName}/:${fk.columnName}/${fk.foreignTable}`,
-        description: `Get related ${fk.foreignTable} for ${tableName} by ${fk.columnName}`,
-        params: [
-          {
-            name: fk.columnName,
-            type: "path",
-            desc: `Foreign key (${fk.columnName})`,
-          },
-        ],
-        response: "200 OK",
-        type: "REL",
-        relationship: `${tableName} → ${fk.foreignTable} via ${fk.columnName}`,
-      });
-    });
-    tableInfo.reverseForeignKeys?.forEach((rfk) => {
-      endpoints.push({
-        table: tableName,
-        method: "GET",
-        path: `/api/${connectionId}/${tableName}/by_${rfk.referencedColumn}/:${rfk.referencedColumn}/${rfk.referencingTable}`,
-        description: `Get all ${rfk.referencingTable} for ${tableName} by ${rfk.referencedColumn}`,
-        params: [
-          {
-            name: rfk.referencedColumn,
-            type: "path",
-            desc: `Referenced key (${rfk.referencedColumn})`,
-          },
-        ],
-        response: "200 OK",
-        type: "REL",
-        relationship: `${tableName} ← ${rfk.referencingTable} via ${rfk.referencedColumn}`,
-      });
-    });
-
-    // Remove duplicate endpoints by path (keep first occurrence)
-    const unique = [];
-    const seen = new Set();
-    for (const e of endpoints) {
-      if (!seen.has(e.path)) {
-        seen.add(e.path);
-        unique.push(e);
-      }
-    }
-    return unique;
-  };
 
   // Quick stats
   const stats = useMemo(() => {
+    if (remoteEndpoints && remoteEndpoints.length) {
+      const total = remoteEndpoints.length;
+      const crud = remoteEndpoints.filter((e) => e.type === "CRUD").length;
+      const rel = remoteEndpoints.filter((e) => e.type === "REL").length;
+      const tables = new Set(remoteEndpoints.map((e) => e.table)).size;
+      return { total, crud, rel, tables };
+    }
     if (!schema) return { total: 0, crud: 0, rel: 0, tables: 0 };
-    let total = 0,
-      crud = 0,
-      rel = 0;
-    Object.entries(schema).forEach(([table, info]) => {
-      const eps = generateEndpoints(table, info);
-      total += eps.length;
-      crud += eps.filter((e) => e.type === "CRUD").length;
-      rel += eps.filter((e) => e.type === "REL").length;
-    });
-    return { total, crud, rel, tables: Object.keys(schema).length };
-  }, [schema]);
+    // If only schema is available, show table count but no generated endpoints
+    return { total: 0, crud: 0, rel: 0, tables: Object.keys(schema).length };
+  }, [remoteEndpoints, schema]);
 
   // Table list for filter
   const tableList = useMemo(
@@ -403,6 +206,30 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
   const handleTryIt = (endpoint) => alert("Try it panel coming soon!");
   const handleGetCode = (endpoint) => alert("Code modal coming soon!");
 
+  // Navigate to a specific table in the list and focus it
+  const goToTable = (tableName) => {
+    setExpandedTable(tableName);
+    closeSidebar();
+    setTimeout(() => {
+      const el = document.getElementById(`table-${tableName}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 200);
+  };
+
+  // Try a sample cross-table call by injecting sample path params (replaces `:param` tokens with `1`)
+  const trySampleCrossTable = (endpoint) => {
+    if (!endpoint || !endpoint.path) return;
+    const samplePath = endpoint.path.replace(/:([a-zA-Z0-9_]+)/g, "1");
+    const sampleParams = {};
+    (endpoint.params || []).forEach((p) => {
+      if (p.type === "path") sampleParams[p.name] = "1";
+    });
+    const sampleEndpoint = { ...endpoint, path: samplePath, sampleParams };
+    if (onTryIt) onTryIt(sampleEndpoint);
+    else handleTryIt(sampleEndpoint);
+    closeSidebar();
+  };
+
   if (!schema) {
     return (
       <Paper elevation={3} sx={{ p: 3 }}>
@@ -426,6 +253,11 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
         {expandedTable && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             All available endpoints for <b>{schema && expandedTable}</b>
+          </Typography>
+        )}
+        {remoteEndpoints === null && (
+          <Typography variant="body2" color="warning.main" sx={{ mb: 1 }}>
+            No generated endpoints were returned from the backend. The frontend no longer generates endpoints locally—ensure the backend's <code>/__generated_endpoints</code> endpoint is available.
           </Typography>
         )}
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
@@ -847,47 +679,15 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
 
       {/* Endpoints List */}
       {filteredTables.map(([tableName, tableInfo]) => {
-        // Only show cross-table endpoints under referenced tables, not join tables
-        let endpoints = filterEndpoints(
-          generateEndpoints(tableName, tableInfo)
-        );
-        // For referenced tables, add cross-table endpoints from join tables
-        if (schema) {
-          Object.entries(schema).forEach(([joinTable, joinInfo]) => {
-            const joinFks = joinInfo.foreignKeys || [];
-            if (joinFks.length >= 2) {
-              for (let i = 0; i < joinFks.length; i++) {
-                for (let j = 0; j < joinFks.length; j++) {
-                  if (i === j) continue;
-                  const fkA = joinFks[i];
-                  const fkB = joinFks[j];
-                  if (fkA.foreignTable === tableName) {
-                    endpoints.push({
-                      table: tableName,
-                      method: "GET",
-                      path: `/api/${connectionId}/${fkA.foreignTable}/by_${fkA.columnName}/:${fkA.columnName}/${fkB.foreignTable}`,
-                      description: `Get all ${fkB.foreignTable} for ${fkA.columnName} via ${joinTable}`,
-                      params: [
-                        {
-                          name: fkA.columnName,
-                          type: "path",
-                          desc: `Foreign key (${fkA.columnName})`,
-                        },
-                      ],
-                      response: `200 OK ({ ${fkA.columnName}, ${fkB.foreignTable}: [...] })`,
-                      type: "REL",
-                      relationship: `${fkA.columnName} → ${fkB.foreignTable} via ${joinTable}`,
-                    });
-                  }
-                }
-              }
-            }
-          });
+        // Prefer backend-provided endpoints if available (frontend-side generation removed)
+        let endpoints = [];
+        if (remoteEndpoints) {
+          endpoints = remoteEndpoints.filter((e) => e.table === tableName || (e.path && e.path.includes(`/${tableName}/`)));
         }
         if (endpoints.length === 0) return null;
         const isExpanded = expandedTable === tableName;
         return (
-          <Box key={tableName} sx={{ mb: 2 }}>
+          <Box key={tableName} id={`table-${tableName}`} sx={{ mb: 2 }}>
             <Box
               sx={{
                 display: "flex",
@@ -985,7 +785,7 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
                         color="info.main"
                         sx={{ mb: 1 }}
                       >
-                        Relationship: {endpoint.relationship}
+                        Relationship: {typeof endpoint.relationship === 'object' ? JSON.stringify(endpoint.relationship) : endpoint.relationship}
                       </Typography>
                     )}
                     <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
@@ -1009,6 +809,11 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
                       >
                         Get Code
                       </Button>
+                      {endpoint._meta?.canonical && (
+                        <Tooltip title="Canonical pair path">
+                          <Chip label="Canonical" size="small" />
+                        </Tooltip>
+                      )}
                       <Button
                         size="small"
                         startIcon={<InfoIcon />}
@@ -1093,6 +898,67 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
                   {sidebar.endpoint.path}
                 </Box>
               </Paper>
+
+              {/* Cross-table metadata (friendly UI) */}
+              {sidebar.endpoint._meta?.crossTable && (
+                <>
+                  <Typography variant="subtitle2" sx={{ mt: 1 }}>
+                    Cross-table metadata
+                  </Typography>
+                  <Paper
+                    variant="outlined"
+                    sx={{ p: 1, bgcolor: bgPanel, color: textColor, mb: 2 }}
+                  >
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+                      <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => trySampleCrossTable(sidebar.endpoint)}>
+                        Try sample
+                      </Button>
+                    </Box>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      <b>Join table:</b> {sidebar.endpoint._meta.crossTable.tableName}
+                    </Typography>
+                    <Stack spacing={1}>
+                      <Box>
+                        <Typography variant="subtitle2">fkA</Typography>
+                        <Typography variant="body2">
+                          <b>Column:</b>{' '}
+                          {sidebar.endpoint._meta.crossTable.fkA?.columnName ?? 'N/A'}
+                        </Typography>
+                        <Typography variant="body2">
+                          <b>References:</b>{' '}
+                          {sidebar.endpoint._meta.crossTable.fkA?.foreignTable ? (
+                            <Button size="small" onClick={() => goToTable(sidebar.endpoint._meta.crossTable.fkA.foreignTable)}>
+                              {sidebar.endpoint._meta.crossTable.fkA.foreignTable}
+                            </Button>
+                          ) : (
+                            'N/A'
+                          )}
+                          {sidebar.endpoint._meta.crossTable.fkA?.foreignColumn ? `.${sidebar.endpoint._meta.crossTable.fkA.foreignColumn}` : ''}
+                        </Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="subtitle2">fkB</Typography>
+                        <Typography variant="body2">
+                          <b>Column:</b>{' '}
+                          {sidebar.endpoint._meta.crossTable.fkB?.columnName ?? 'N/A'}
+                        </Typography>
+                        <Typography variant="body2">
+                          <b>References:</b>{' '}
+                          {sidebar.endpoint._meta.crossTable.fkB?.foreignTable ? (
+                            <Button size="small" onClick={() => goToTable(sidebar.endpoint._meta.crossTable.fkB.foreignTable)}>
+                              {sidebar.endpoint._meta.crossTable.fkB.foreignTable}
+                            </Button>
+                          ) : (
+                            'N/A'
+                          )}
+                          {sidebar.endpoint._meta.crossTable.fkB?.foreignColumn ? `.${sidebar.endpoint._meta.crossTable.fkB.foreignColumn}` : ''}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                </>
+              )}
+
               <Typography variant="subtitle2">Status Codes</Typography>
               <List dense>
                 <ListItem sx={{ pl: 0 }}>

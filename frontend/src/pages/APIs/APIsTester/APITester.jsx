@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback, useContext } from "react";
 import {
   Paper,
   Typography,
@@ -18,39 +18,18 @@ import {
   Tooltip,
 } from "@mui/material";
 import ReactJson from "@microlink/react-json-view";
-import { getSchema, listRecords } from "../../../services/api";
+import { getSchema, listRecords, getOperators } from "../../../services/api";
 import api from "../../../services/api";
 import GetOptionsPanel from "./GetOptionsPanel";
 import { renderColumnControl, formatRowSummary } from "../../../_shared/database/utils";
+import { AppContext } from "../../../App";
 
-const APITester = ({ connectionId, endpoint, open, onClose }) => {
-  const [schema, setSchema] = useState(null);
-  // For cross-table endpoints (e.g., /products/by_order_id/:order_id)
-  const [selectedTable, setSelectedTable] = useState(
-    endpoint?.table || endpoint?.tableName || ""
-  );
-  const [operation, setOperation] = useState(endpoint?.method || "GET");
-  const [recordId, setRecordId] = useState("");
-  const [requestBody, setRequestBody] = useState("{}");
+const APITester = ({ connectionId, endpoint, selectedTable, operation, operatorsMap }) => {
+  const { schema } = useContext(AppContext);
+
   const [bodyFields, setBodyFields] = useState({});
   const [nextAutoId, setNextAutoId] = useState(null);
   const [foreignKeyOptions, setForeignKeyOptions] = useState({});
-
-  // use shared helpers for row summaries and field rendering
-
-  const [filters, setFilters] = useState({});
-  // Path params extracted from endpoint.path (e.g. :order_id) - shown separately from WHERE filters
-  const [pathParams, setPathParams] = useState({});
-  // Additional filters are collapsed by default
-  const [filtersCollapsed, setFiltersCollapsed] = useState(true);
-  const OPERATORS = [
-    { value: "eq", label: "=" },
-    { value: "contains", label: "contains" },
-    { value: "gt", label: ">" },
-    { value: "gte", label: ">=" },
-    { value: "lt", label: "<" },
-    { value: "lte", label: "<=" },
-  ];
   const [pageSize, setPageSize] = useState("");
   const [pageNumber, setPageNumber] = useState("1");
   const [orderBy, setOrderBy] = useState("");
@@ -59,29 +38,30 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [pathParamErrors, setPathParamErrors] = useState({});
-  // Removed activeTab and setActiveTab, only Test API tab remains
+
+  const [filters, setFilters] = useState({});
+  // Path params extracted from endpoint.path (e.g. :order_id) - shown separately from WHERE filters
+  const [pathParams, setPathParams] = useState({});
+  // Additional filters are collapsed by default
+  const [filtersCollapsed, setFiltersCollapsed] = useState(true);
+
+  // Auto-expand filters when performing a DELETE (safer UX)
   useEffect(() => {
-    const loadSchema = async () => {
-      if (!connectionId) return;
-      try {
-        const data = await getSchema(connectionId);
-        setSchema(data);
-        // Use table from endpoint if provided
-        if (endpoint?.table || endpoint?.tableName) {
-          setSelectedTable(endpoint.table || endpoint.tableName);
-        } else if (Object.keys(data).length > 0) {
-          setSelectedTable(Object.keys(data)[0]);
-        }
-        // Use method from endpoint if provided
-        if (endpoint?.method) {
-          setOperation(endpoint.method);
-        }
-      } catch (err) {
-        console.error("Error loading schema:", err);
+    if (operation === 'DELETE') setFiltersCollapsed(false);
+  }, [operation]);
+  console.log(schema)
+  // Return operator options appropriate for the column type
+  function getOperatorsForColumn(col) {
+    // Prefer backend-provided operators when available
+    try {
+      if (operatorsMap && selectedTable && operatorsMap[selectedTable] && operatorsMap[selectedTable][col.name]) {
+        return operatorsMap[selectedTable][col.name];
       }
-    };
-    loadSchema();
-  }, [connectionId, endpoint]);
+    } catch (e) {
+      // ignore and fallback
+    }
+
+  }
 
   // Initialize filter inputs when selectedTable or schema changes
   useEffect(() => {
@@ -90,7 +70,7 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
     const obj = {};
     cols.forEach((c) => {
       if ((c.name || "").toLowerCase().includes("password")) return;
-      obj[c.name] = { op: "eq", val: "" };
+      obj[c.name] = { op: getOperatorsForColumn(c)[0].value, val: "" };
     });
     // remove any keys that are path params
     Object.keys(pathParams || {}).forEach((pn) => delete obj[pn]);
@@ -170,6 +150,9 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
       schema[selectedTable].primaryKeys[0];
     const pkCol = cols.find((c) => c.name === pk);
     const body = {};
+    if (operation === "POST") {
+
+    }
     // If PK is auto-increment, fetch its next value from backend
     if (pkCol && pkCol.isAutoIncrement) {
       // Fetch next auto-increment value
@@ -232,10 +215,19 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
   const buildPayloadFromBodyFields = () => {
     if (!schema || !selectedTable) return {};
     const cols = schema[selectedTable]?.columns || [];
+    const pks = schema[selectedTable]?.primaryKeys || [];
+    const fks = schema[selectedTable]?.foreignKeys || [];
+    const fkCols = (fks || []).map((f) => f.columnName);
     const payload = {};
     Object.entries(bodyFields || {}).forEach(([k, v]) => {
       if (v === "" || v === undefined) return; // skip empty
       const col = cols.find((c) => c.name === k);
+
+      // Skip primary keys unless they are also foreign keys
+      const isPk = pks.includes(k);
+      const isFk = fkCols.includes(k);
+      if (isPk && !isFk) return;
+
       const type = (col?.type || "").toLowerCase();
       // booleans
       if (["bool", "boolean"].some((t) => type.includes(t))) {
@@ -360,62 +352,20 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
         });
         parsedBody = { data: updateFields, where };
       }
-      // Build URL: prefer explicit endpoint.path (from EndpointExplorer) which may include path params, otherwise use table root
-      let url;
       const pathParamNames = [];
-      if (endpoint?.path) {
-        // endpoint.path may include leading /api and connectionId; remove leading /api to work with api baseURL
-        let path = endpoint.path;
-        if (path.startsWith("/api")) path = path.slice(4);
-        // Replace any :params with values from filters/recordId/bodyFields
-        const paramMatches = path.match(/:([a-zA-Z0-9_]+)/g) || [];
-        for (const pm of paramMatches) {
-          const param = pm.slice(1);
-          pathParamNames.push(param);
-          const val =
-            pathParams[param] ??
-            filters[param]?.val ??
-            (param === "id" ? recordId : null) ??
-            bodyFields[param];
-          if (!val) {
-            setError(`Please provide a value for path parameter :${param}`);
-            setLoading(false);
-            return;
-          }
-          path = path.replace(`:${param}`, encodeURIComponent(val));
-        }
-        // path includes connectionId already (EndpointExplorer builds it), but if not, ensure it is present
-        if (path.startsWith(`/${connectionId}`)) {
-          url = path;
-        } else {
-          url = `/${connectionId}${path.startsWith("/") ? "" : "/"}${path}`;
-        }
-        console.debug("APITester: built request URL", {
-          url,
-          pathParams,
-          pathParamNames,
-          filters,
-        });
-      } else {
-        url = `/${connectionId}/${selectedTable}`;
-      }
+
+      let url = `/${connectionId}/${selectedTable}`;
 
       if (operation === "GET" || operation === "DELETE") {
         const params = new URLSearchParams();
         // add filters (with operators) but exclude any that were used as path params
         Object.entries(filters || {}).forEach(([k, v]) => {
-          if (pathParamNames.includes(k)) return; // skip path params
           const op = v?.op || "eq";
           const val = v?.val;
-          // build param name
-          let paramName;
-          if (op === "eq") paramName = k;
-          else if (op === "contains") paramName = `${k}__like`;
-          else paramName = `${k}__${op}`;
-
-          if (val) {
-            params.append(paramName, op === "contains" ? `%${val}%` : val);
-          }
+          if (val === undefined || val === '') return;
+          // build param name: eq -> key, otherwise key__op
+          const paramName = op === 'eq' ? k : `${k}__${op}`;
+          params.append(paramName, val);
         });
         if (operation === "GET") {
           if (orderBy) params.append("orderBy", orderBy);
@@ -431,6 +381,17 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
         }
         const qs = params.toString();
         if (qs) url += `?${qs}`;
+
+        // Safety: DELETE must have filters (query params) or path params; refuse to send otherwise
+        if (operation === 'DELETE') {
+          const hasQueryFilters = !!qs;
+          const hasPathParams = pathParamNames && pathParamNames.length > 0;
+          if (!hasQueryFilters && !hasPathParams) {
+            setError('DELETE requires at least one filter or a path parameter to avoid accidental full-table deletes. Expand "Additional filters" and add a filter.');
+            setLoading(false);
+            return;
+          }
+        }
       }
 
       let result;
@@ -444,20 +405,7 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
           result = await api.post(url, parsedBody);
           break;
         case "PUT": {
-          // For PUT, require recordId and append to URL. If not provided, try to get PK from WHERE conditions.
-          const pk = schema[selectedTable]?.primaryKeys?.[0];
-          let id = recordId || bodyFields[pk];
-          if (!id && filters[pk]?.val) {
-            id = filters[pk].val;
-          }
-          if (!id) {
-            setError(
-              `Please provide a value for the primary key (${pk}) to update (either in the ID field or WHERE conditions).`
-            );
-            setLoading(false);
-            return;
-          }
-          result = await api.put(`${url}/${id}`, parsedBody);
+          result = await api.put(url, parsedBody);
           break;
         }
         case "DELETE":
@@ -510,9 +458,9 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
               [col.name]: { ...(f[col.name] || {}), op: e.target.value },
             }))
           }
-          sx={{ width: 120 }}
+          sx={{ width: 160 }}
         >
-          {OPERATORS.map((o) => (
+          {getOperatorsForColumn(col).map((o) => (
             <MenuItem key={o.value} value={o.value}>
               {o.label}
             </MenuItem>
@@ -542,6 +490,29 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
     return colors[method] || "default";
   };
 
+  // Stable text input field to avoid losing focus during re-renders
+  const TextInputField = React.memo(({ col, value, onChange, disabled = false, type = 'text', label }) => {
+    const inputRef = useRef(null);
+    return (
+      <Grid item xs={12} md={6} key={col.name}>
+        <TextField
+          fullWidth
+          size="small"
+          label={label || col.name}
+          type={type}
+          inputRef={inputRef}
+          value={value ?? ""}
+          onChange={(e) => onChange && onChange(e.target.value)}
+          disabled={disabled}
+        />
+      </Grid>
+    );
+  }, (prev, next) => prev.value === next.value && prev.disabled === next.disabled);
+
+  const handleFieldChange = useCallback((colName, value) => {
+    setBodyFields((b) => ({ ...b, [colName]: value }));
+  }, []);
+
   const AdditionalFiltersToggle = () => {
     if (!schema || !selectedTable) return null;
     return (
@@ -566,7 +537,6 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
                 if (crossTableMatch && schema) {
                   const refTable = crossTableMatch[1]; // e.g., orders
                   const fkCol = crossTableMatch[2]; // e.g., order_id
-                  const paramName = crossTableMatch[3]; // e.g., order_id (path param)
                   const targetTable = crossTableMatch[4]; // e.g., products
                   // Ensure fk column object
                   let fkColObj = schema[refTable]?.columns?.find(
@@ -703,46 +673,47 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
         {endpoint?.path || `/${connectionId}/${selectedTable}`}
       </Typography>
       {/* Common Configuration (Test API only) */}
-      {operation === "GET" || operation === "DELETE" ? (
+      {/* Show path parameters input for any operation when the endpoint defines them (e.g., PUT /categories/:id) */}
+      {Object.keys(pathParams || {}).length > 0 && (
         <>
-          {/* Parameters (path params shown separately) */}
-          {Object.keys(pathParams || {}).length > 0 && (
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  Parameters
-                </Typography>
-              </Grid>
-              {Object.keys(pathParams).map((p) => (
-                <Grid item xs={12} md={6} key={p + "_param"}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label={`${p} *`}
-                    value={pathParams[p] ?? ""}
-                    error={!!pathParamErrors[p]}
-                    helperText={pathParamErrors[p] ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setPathParams((pp) => ({ ...pp, [p]: v }));
-                      setPathParamErrors((err) => {
-                        const copy = { ...err };
-                        delete copy[p];
-                        return copy;
-                      });
-                    }}
-                  />
-                </Grid>
-              ))}
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Parameters
+              </Typography>
             </Grid>
-          )}
+            {Object.keys(pathParams).map((p) => (
+              <Grid item xs={12} md={6} key={p + "_param"}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label={`${p} ${operation === 'PUT' ? '*' : ''}`}
+                  value={pathParams[p] ?? ""}
+                  error={!!pathParamErrors[p]}
+                  helperText={pathParamErrors[p] ?? (operation === 'PUT' && p === 'id' ? 'For PUT requests, provide the primary key value here or in the ID field below.' : '')}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPathParams((pp) => ({ ...pp, [p]: v }));
+                    setPathParamErrors((err) => {
+                      const copy = { ...err };
+                      delete copy[p];
+                      return copy;
+                    });
+                  }}
+                />
+              </Grid>
+            ))}
+          </Grid>
 
           {/* Additional Filters toggle */}
-          <AdditionalFiltersToggle />
+
         </>
-      ) : (
-        <></>
       )}
+      {
+        (operation === 'DELETE' || (operation === "GET")) && (<AdditionalFiltersToggle />)
+      }
+
+
       {operation === "POST" && (
         <Grid container spacing={2} sx={{ mt: 2 }}>
           <Grid item xs={12}>
@@ -1029,29 +1000,198 @@ const APITester = ({ connectionId, endpoint, open, onClose }) => {
             selectedTable &&
             (schema[selectedTable]?.columns || []).map((col) => {
               const pk = schema[selectedTable]?.primaryKeys?.[0];
+              const isPk = col.name === pk;
               const isFK = (schema[selectedTable]?.foreignKeys || []).some(
                 (fk) => fk.columnName === col.name
               );
-              if (col.name === pk || isFK) return null;
               const name = (col.name || "").toLowerCase();
               if (name.includes("password")) return null;
               const type = (col.type || "").toLowerCase();
-              // Only allow non-PK, non-FK, non-password columns
-              return (
-                <Grid item xs={12} md={6} key={col.name}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label={col.name}
+
+              // Only allow columns that are:
+              // - PK+FK
+              // - FK-only
+              // - neither PK nor FK
+              // Exclude PK-only
+              if (isPk && !isFK) return null;
+
+              // Foreign key dropdown -> Autocomplete
+              const fk = (schema[selectedTable]?.foreignKeys || []).find(
+                (fk) => fk.columnName === col.name
+              );
+              if (fk) {
+                const rawOpts = foreignKeyOptions[col.name];
+                const opts = Array.isArray(rawOpts) ? rawOpts : [];
+                const valKey = fk.foreignColumn || fk.foreign_column || "id";
+                const loading = rawOpts === undefined;
+                const selectedOption =
+                  opts.find((r) => String(r[valKey] ?? r[Object.keys(r || {})[0]] ?? "") === String(bodyFields[col.name] ?? "")) || null;
+                return (
+                  <Grid item xs={12} md={6} key={col.name}>
+                    <Autocomplete
+                      size="small"
+                      options={opts}
+                      loading={loading}
+                      noOptionsText={loading ? 'Loading...' : 'No options'}
+                      getOptionLabel={(row) => {
+                        const primary = row[valKey] ?? row[Object.keys(row || {})[0]] ?? '';
+                        const summary = formatRowSummary(row, valKey);
+                        return primary ? (summary ? `${primary} — ${summary}` : String(primary)) : JSON.stringify(row);
+                      }}
+                      filterOptions={(options, state) => {
+                        const q = state.inputValue.toLowerCase();
+                        return options.filter((r) => {
+                          const primary = String(r[valKey] ?? Object.values(r || {})[0] ?? '').toLowerCase();
+                          if (primary.includes(q)) return true;
+                          return Object.values(r || {}).some((v) => String(v ?? '').toLowerCase().includes(q));
+                        });
+                      }}
+                      value={selectedOption}
+                      onChange={(e, newVal) => {
+                        const v = newVal ? (newVal[valKey] ?? newVal[Object.keys(newVal || {})[0]] ?? '') : '';
+                        setBodyFields((b) => ({ ...b, [col.name]: v }));
+                      }}
+                      isOptionEqualToValue={(opt, valOpt) => {
+                        const ov = opt ? (opt[valKey] ?? opt[Object.keys(opt || {})[0]] ?? '') : '';
+                        const vv = valOpt ? (valOpt[valKey] ?? valOpt[Object.keys(valOpt || {})[0]] ?? '') : '';
+                        return String(ov) === String(vv);
+                      }}
+                      renderOption={(props, row) => {
+                        const { fullWidth, size, indicator, ...rest } = props;
+                        return (
+                          <li {...rest}>
+                            <Tooltip title={<pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(row, null, 2)}</pre>} placement="right">
+                              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                                <Typography variant="body2">{String(row[valKey] ?? Object.values(row || {})[0] ?? '')}</Typography>
+                                {formatRowSummary(row, valKey) ? <Typography variant="caption" color="text.secondary">{formatRowSummary(row, valKey)}</Typography> : null}
+                              </Box>
+                            </Tooltip>
+                          </li>
+                        );
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          fullWidth
+                          size="small"
+                          label={col.name}
+                          value={bodyFields[col.name] ?? ""}
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {loading ? <CircularProgress size={16} /> : null}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                );
+              }
+              // Enum
+              if (
+                Array.isArray(col.enumOptions) &&
+                col.enumOptions.length > 0
+              ) {
+                return (
+                  <Grid item xs={12} md={6} key={col.name}>
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label={col.name}
+                      value={bodyFields[col.name] ?? ""}
+                      onChange={(e) =>
+                        setBodyFields((b) => ({
+                          ...b,
+                          [col.name]: e.target.value,
+                        }))
+                      }
+                    >
+                      {col.enumOptions.map((ev) => (
+                        <MenuItem key={ev} value={ev}>
+                          {ev}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                );
+              }
+              // Boolean
+              if (["bool", "boolean"].some((t) => type.includes(t))) {
+                return (
+                  <Grid item xs={12} md={6} key={col.name}>
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label={col.name}
+                      value={bodyFields[col.name] ?? ""}
+                      onChange={(e) =>
+                        setBodyFields((b) => ({
+                          ...b,
+                          [col.name]: e.target.value,
+                        }))
+                      }
+                    >
+                      <MenuItem value="">Unset</MenuItem>
+                      <MenuItem value={true}>True</MenuItem>
+                      <MenuItem value={false}>False</MenuItem>
+                    </TextField>
+                  </Grid>
+                );
+              }
+              // Number
+              if (
+                [
+                  "int",
+                  "integer",
+                  "bigint",
+                  "smallint",
+                  "numeric",
+                  "decimal",
+                  "float",
+                  "double",
+                  "real",
+                ].some((t) => type.includes(t))
+              ) {
+                return (
+                  <TextInputField
+                    key={col.name}
+                    col={col}
                     value={bodyFields[col.name] ?? ""}
-                    onChange={(e) =>
-                      setBodyFields((b) => ({
-                        ...b,
-                        [col.name]: e.target.value,
-                      }))
-                    }
+                    onChange={(v) => handleFieldChange(col.name, v)}
+                    type="number"
                   />
-                </Grid>
+                );
+              }
+              // Date / datetime
+              if (
+                ["date", "timestamp", "datetime"].some((t) => type.includes(t))
+              ) {
+                const isDateOnly =
+                  type.includes("date") && !type.includes("time");
+                return (
+                  <TextInputField
+                    key={col.name}
+                    col={col}
+                    value={bodyFields[col.name] ?? ""}
+                    onChange={(v) => handleFieldChange(col.name, v)}
+                    type={isDateOnly ? "date" : "datetime-local"}
+                  />
+                );
+              }
+              // Default text
+              return (
+                <TextInputField
+                  key={col.name}
+                  col={col}
+                  value={bodyFields[col.name] ?? ""}
+                  onChange={(v) => handleFieldChange(col.name, v)}
+                />
               );
             })}
 

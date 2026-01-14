@@ -25,6 +25,11 @@ export const getSchema = async (connectionId) => {
   return response.data;
 };
 
+export const getOperators = async (connectionId) => {
+  const response = await api.get(`/connections/${connectionId}/operators`);
+  return response.data;
+};
+
 export const getSwagger = async (connectionId) => {
   const response = await api.get(`/connections/${connectionId}/swagger`);
   return response.data;
