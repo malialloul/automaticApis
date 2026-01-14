@@ -424,9 +424,7 @@ class APIGenerator {
     // If table lacks a primary key, skip single-item CRUD routes (only list is available)
     const hasPK = Array.isArray(tableSchema.primaryKeys) && tableSchema.primaryKeys.length > 0;
     if (!hasPK) {
-      // Still collect relationship metadata where applicable
-      this.generateRelationshipRoutes(tableName, tableSchema, basePath);
-      this.generateMultiJoinRoutes(tableName, tableSchema, basePath);
+      // Table lacks a primary key: only list/collection-level CRUD routes will be available
       return;
     }
 
@@ -451,61 +449,12 @@ class APIGenerator {
 
     // (Removed per-id delete route) single-item delete routes are intentionally not registered; use collection-level DELETE with filters instead.
 
-    // Keep simple relationship routes (single-FK) and collect metadata for complex ones
-    this.generateRelationshipRoutes(tableName, tableSchema, basePath);
-    // Collect multi-join metadata only
-    this.generateMultiJoinRoutes(tableName, tableSchema, basePath);
+
   }
 
-  generateRelationshipRoutes(tableName, tableSchema, basePath) {
-    // For each FK, generate a unique endpoint using the FK column (existing behavior)
-    for (const fk of tableSchema.foreignKeys || []) {
-      const relatedTable = fk.foreignTable;
-      const fkCol = fk.columnName;
-      this.router.get(`${basePath}/by_${fkCol}/:${fkCol}/${relatedTable}`, async (req, res) => {
-        try {
-          const qb = new QueryBuilder(tableName, tableSchema, this.dialect);
-          const q = qb.buildRelatedQuery(relatedTable, req.params[fkCol], req.query, fkCol);
-          const result = await this.pool.query(q.text, q.values);
-          const rows = result.rows ?? result[0];
-          res.json(rows);
-        } catch (error) {
-          console.error(`Error getting related ${relatedTable} by ${fkCol}:`, error);
-          res.status(500).json({ error: error.message });
-        }
-      });
-    }
-
-    // For each reverse FK, generate a unique endpoint using the referencing column (existing behavior)
-    for (const rfk of tableSchema.reverseForeignKeys || []) {
-      const relatedTable = rfk.referencingTable;
-      this.router.get(`${basePath}/by_${rfk.referencedColumn}/:${rfk.referencedColumn}/${relatedTable}`, async (req, res) => {
-        try {
-          const qb = new QueryBuilder(tableName, tableSchema, this.dialect);
-          const q = qb.buildRelatedQuery(relatedTable, req.params[rfk.referencedColumn], req.query, rfk.referencedColumn);
-          const result = await this.pool.query(q.text, q.values);
-          const rows = result.rows ?? result[0];
-          res.json(rows);
-        } catch (error) {
-          console.error(`Error getting related ${relatedTable} by ${rfk.referencedColumn}:`, error);
-          res.status(500).json({ error: error.message });
-        }
-      });
-    }
-
-    // For join tables with 2+ FKs, generate pair endpoints metadata (no runtime routes)
-    const fks = tableSchema.foreignKeys || [];
-    if (fks.length >= 2) {
-      this._generatedPairEndpoints = this._generatedPairEndpoints || [];
-      for (let i = 0; i < fks.length; i++) {
-        for (let j = i + 1; j < fks.length; j++) {
-          const fkA = fks[i];
-          const fkB = fks[j];
-          const path = `${basePath}/by_${fkA.columnName}/:${fkA.columnName}/by_${fkB.columnName}/:${fkB.columnName}`;
-          if (!this._generatedPairEndpoints.includes(path)) this._generatedPairEndpoints.push(path);
-        }
-      }
-    }
+  generateRelationshipRoutes(/* tableName, tableSchema, basePath */) {
+    // Relationship endpoints are disabled - no-op
+    return;
   }
 
     generateRoutes() {
@@ -515,20 +464,8 @@ class APIGenerator {
       this.generateCRUDRoutes(tableName, tableSchema);
     }
 
-    // Phase 2: register simple relationship routes (single-FK)
-    for (const [tableName, tableSchema] of Object.entries(this.schema)) {
-      const basePath = `/${tableName}`;
-      this.generateRelationshipRoutes(tableName, tableSchema, basePath);
-    }
-
-    // Phase 3: generate cross-table metadata (join-table derived endpoints)
-    this.generateCrossTableEndpoints();
-
-    // Phase 4: collect multi-join metadata (does not yet register routes)
-    for (const [tableName, tableSchema] of Object.entries(this.schema)) {
-      const basePath = `/${tableName}`;
-      this.generateMultiJoinRoutes(tableName, tableSchema, basePath);
-    }
+    // Relationship/cross-table endpoints are disabled: only CRUD routes will be registered
+    // (Removed generation of REL and multi-join endpoints per user request)
 
     // Public endpoint for UI to fetch generated endpoints (CRUD, REL, multi-join)
     this.router.get('/__generated_endpoints', async (req, res) => {
@@ -551,53 +488,8 @@ class APIGenerator {
           endpoints.push({ table: tableName, method: 'POST', path: `/${tableName}`, description: `Create ${tableName}`, params: [{ name: 'body', type: 'body' }], type: 'CRUD' });
         }
 
-        // Add relationship & cross-table endpoints
-        for (const [tableName, tableSchema] of Object.entries(this.schema)) {
-          for (const fk of tableSchema.foreignKeys || []) {
-            const related = fk.foreignTable;
-            endpoints.push({ table: tableName, method: 'GET', path: `/${tableName}/by_${fk.columnName}/:${fk.columnName}/${related}`, description: `Get related ${related} for ${tableName} by ${fk.columnName}`, params: [{ name: fk.columnName, type: 'path' }], type: 'REL', relationship: `${tableName} → ${related} via ${fk.columnName}` });
-          }
-          for (const rfk of tableSchema.reverseForeignKeys || []) {
-            endpoints.push({ table: tableName, method: 'GET', path: `/${tableName}/by_${rfk.referencedColumn}/:${rfk.referencedColumn}/${rfk.referencingTable}`, description: `Get all ${rfk.referencingTable} for ${tableName} by ${rfk.referencedColumn}`, params: [{ name: rfk.referencedColumn, type: 'path' }], type: 'REL', relationship: `${tableName} ← ${rfk.referencingTable} via ${rfk.referencedColumn}` });
-          }
-        }
-
-        // Add cross-table endpoints generated earlier
-        (this._generatedCrossTableEndpoints || []).forEach((e) =>
-          endpoints.push({
-            table: e.tableName,
-            method: 'GET',
-            path: e.endpoint,
-            description: e.endpoint,
-            params: [],
-            type: 'REL',
-            // relationship should be a string for UI rendering; keep original metadata under _meta
-            relationship: `${e.tableName}: ${e.fkA.columnName} → ${e.fkB.columnName}`,
-            _meta: { crossTable: { tableName: e.tableName, fkA: e.fkA, fkB: e.fkB } },
-          })
-        );
-
-        // Add multi-join endpoints by iterating and calling the same generator used internally
-        const multiJoinList = [];
-        const collectMulti = (start) => {
-          const add = (path) => {
-            if (!multiJoinList.includes(path)) multiJoinList.push(path);
-          };
-          // Recreate using the same recursion used by generateMultiJoinRoutes
-          const recurse = (path, tables) => {
-            const lastTable = tables[tables.length - 1];
-            const lastFks = this.schema[lastTable]?.foreignKeys || [];
-            for (const fk of lastFks) {
-              if (tables.includes(fk.foreignTable)) continue;
-              const newPath = `${path}/by_${fk.columnName}/:${fk.columnName}/${fk.foreignTable}`;
-              add(`/api/${this.connectionId}${newPath}`);
-              recurse(newPath, [...tables, fk.foreignTable]);
-            }
-          };
-          recurse(`/${start}`, [start]);
-        };
-        Object.keys(this.schema).forEach((t) => collectMulti(t));
-        multiJoinList.forEach((p) => endpoints.push({ table: p.split('/')[2] || '', method: 'GET', path: p, description: 'Multi-join', params: [], type: 'REL' }));
+        // Relationship/cross-table endpoints are disabled; only CRUD endpoints will be returned to the UI
+        // (Removed REL and multi-join endpoints per user request)
 
         // Deduplicate by method+path (keep distinct HTTP methods for the same path)
         const unique = [];
@@ -618,64 +510,7 @@ class APIGenerator {
     });
 
 
-    // Register runtime GET routes for generated cross-table endpoints (delegate to executor)
-    (this._generatedCrossTableEndpoints || []).forEach((e) => {
-      try {
-        this.router.get(e.endpoint, async (req, res) => {
-          try {
-            // req.path is local to the router and includes the matched path
-            const local = req.path.replace(/^\/+/, '');
-            const result = await this.executeGeneratedEndpoint(local, req.params, req.query, null);
-            return res.json(result);
-          } catch (err) {
-            console.error('Error handling generated cross-table GET:', err);
-            if (err.message && err.message.startsWith('missing')) return res.status(400).json({ error: err.message });
-            if (err.message && err.message === 'cross-table endpoint not found') return res.status(404).json({ error: err.message });
-            return res.status(500).json({ error: err.message });
-          }
-        });
-      } catch (err) {
-        console.error('Error registering cross-table runtime route:', e.endpoint, err);
-      }
-    });
-
-    // Register runtime GET routes for multi-join endpoints (recreate list and register)
-    const multiJoinList = [];
-    const collectMulti = (start) => {
-      const add = (path) => {
-        if (!multiJoinList.includes(path)) multiJoinList.push(path);
-      };
-      const recurse = (path, tables) => {
-        const lastTable = tables[tables.length - 1];
-        const lastFks = this.schema[lastTable]?.foreignKeys || [];
-        for (const fk of lastFks) {
-          if (tables.includes(fk.foreignTable)) continue;
-          const newPath = `${path}/by_${fk.columnName}/:${fk.columnName}/${fk.foreignTable}`;
-          add(`/api/${this.connectionId}${newPath}`);
-          recurse(newPath, [...tables, fk.foreignTable]);
-        }
-      };
-      recurse(`/${start}`, [start]);
-    };
-    Object.keys(this.schema).forEach((t) => collectMulti(t));
-    multiJoinList.forEach((p) => {
-      // convert to local router path (strip /api/:connectionId prefix)
-      const local = p.replace(new RegExp(`^/api/${this.connectionId}`), '');
-      try {
-        this.router.get(local, async (req, res) => {
-          try {
-            const result = await this.executeGeneratedEndpoint(local.replace(/^\/+/, ''), req.params, req.query, null);
-            return res.json(result);
-          } catch (err) {
-            console.error('Error handling generated multi-join GET:', err);
-            if (err.message && err.message.startsWith('missing')) return res.status(400).json({ error: err.message });
-            return res.status(500).json({ error: err.message });
-          }
-        });
-      } catch (err) {
-        console.error('Error registering multi-join runtime route:', local, err);
-      }
-    });
+    // Relationship/multi-join runtime routes are disabled.
 
     return this.router;
   }

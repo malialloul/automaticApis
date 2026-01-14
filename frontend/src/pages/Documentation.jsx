@@ -3,7 +3,7 @@ import { Container, Paper, Typography, Box, Button } from '@mui/material';
 import SwaggerUI from 'swagger-ui-react';
 import 'swagger-ui-react/swagger-ui.css';
 import { useConnection } from '../_shared/database/useConnection';
-import ImplementationSnippets from './Apis/APIsTester/ImplementationSnippets';
+import ImplementationSnippets from './APIs/APIsTester/ImplementationSnippets';
 
 const Documentation = () => {
   const {

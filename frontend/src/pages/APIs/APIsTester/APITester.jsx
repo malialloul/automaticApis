@@ -20,9 +20,11 @@ import {
 import ReactJson from "@microlink/react-json-view";
 import { getSchema, listRecords, getOperators } from "../../../services/api";
 import api from "../../../services/api";
-import GetOptionsPanel from "./GetOptionsPanel";
+import GetOptionsPanel from "./components/GetOptionsPanel";
 import { renderColumnControl, formatRowSummary } from "../../../_shared/database/utils";
 import { AppContext } from "../../../App";
+import AdditionalFiltersToggle from "./components/AdditionalFiltersToggle";
+import TextInputField from "./components/TextInputField";
 
 const APITester = ({ connectionId, endpoint, selectedTable, operation, operatorsMap }) => {
   const { schema } = useContext(AppContext);
@@ -49,24 +51,22 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
   useEffect(() => {
     if (operation === 'DELETE') setFiltersCollapsed(false);
   }, [operation]);
-  console.log(schema)
   // Return operator options appropriate for the column type
   function getOperatorsForColumn(col) {
     // Prefer backend-provided operators when available
     try {
-      if (operatorsMap && selectedTable && operatorsMap[selectedTable] && operatorsMap[selectedTable][col.name]) {
-        return operatorsMap[selectedTable][col.name];
-      }
+
+      return operatorsMap[selectedTable][col.name] ?? operatorsMap[endpoint?.relatedTable]?.[col.name];
     } catch (e) {
-      // ignore and fallback
+      return []
     }
 
   }
-
   // Initialize filter inputs when selectedTable or schema changes
   useEffect(() => {
     if (!schema || !selectedTable) return;
-    const cols = schema[selectedTable]?.columns || [];
+    let cols = schema[selectedTable]?.columns || [];
+    if (endpoint?.relatedTable) { cols = [...cols, ...(schema[endpoint.relatedTable]?.columns || [])]; }
     const obj = {};
     cols.forEach((c) => {
       if ((c.name || "").toLowerCase().includes("password")) return;
@@ -103,41 +103,7 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
     // reset param errors when path changes
     setPathParamErrors({});
 
-    // Ensure referenced and join/target columns are present in filters (but exclude path params)
-    const crossMatch = endpoint.path.match(
-      /\/([a-zA-Z0-9_]+)\/by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)\/([a-zA-Z0-9_]+)/
-    );
-    if (crossMatch) {
-      const refTable = crossMatch[1];
-      const fkCol = crossMatch[2];
-      const targetTable = crossMatch[4];
-      let joinTable = Object.keys(schema).find((t) => {
-        const fks = schema[t]?.foreignKeys || [];
-        return (
-          fks.some(
-            (fk) => fk.columnName === fkCol && fk.foreignTable === refTable
-          ) && fks.some((fk) => fk.foreignTable === targetTable)
-        );
-      });
-      const cols = [
-        ...(schema[refTable]?.columns || []),
-        ...(joinTable
-          ? schema[joinTable]?.columns || []
-          : schema[targetTable]?.columns || []),
-      ];
-      setFilters((prev) => {
-        const next = { ...prev };
-        cols.forEach((c) => {
-          if (paramNames.includes(c.name)) return; // exclude path params
-          if (!(c.name in next)) next[c.name] = { op: "eq", val: "" };
-        });
-        // ensure fkCol is present as path param if not in filters
-        if (paramNames.includes(fkCol) && !(fkCol in prev)) {
-          // already handled via pathParams
-        }
-        return next;
-      });
-    }
+
   }, [endpoint?.path, schema]);
 
   // Initialize bodyFields for POST/PUT based on column types (exclude PK and sensitive fields)
@@ -353,24 +319,48 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
         parsedBody = { data: updateFields, where };
       }
       const pathParamNames = [];
+      // Build URL: if endpoint.path provided, replace :params with pathParams/filters/bodyFields; otherwise use default table URL
+      let url;
+      if (endpoint?.path) {
+        let path = endpoint.path;
+        if (path.startsWith("/api")) path = path.slice(4);
+        const paramMatches = path.match(/:([a-zA-Z0-9_]+)/g) || [];
+        for (const pm of paramMatches) {
+          const param = pm.slice(1);
+          pathParamNames.push(param);
+          const val = pathParams[param] ?? filters[param]?.val ?? (param === 'id' ? recordId : null) ?? bodyFields[param];
+          if (!val && (operation === 'PUT' || operation === 'POST')) {
+            // For mutating requests prefer explicit path param values (show field error)
+            setPathParamErrors((err) => ({ ...err, [param]: `Please provide a value for :${param}` }));
+          }
+          if (!val) {
+            setError(`Please provide a value for path parameter :${param}`);
+            setLoading(false);
+            return;
+          }
+          path = path.replace(`:${param}`, encodeURIComponent(val));
+        }
 
-      let url = `/${connectionId}/${selectedTable}`;
+        if (path.startsWith(`/${connectionId}`)) url = path;
+        else url = `/${connectionId}${path.startsWith("/") ? "" : "/"}${path}`;
+      } else {
+        url = `/${connectionId}/${selectedTable}`;
+      }
 
       if (operation === "GET" || operation === "DELETE") {
         const params = new URLSearchParams();
         // add filters (with operators) but exclude any that were used as path params
         Object.entries(filters || {}).forEach(([k, v]) => {
+          if (pathParamNames.includes(k)) return; // skip path params
           const op = v?.op || "eq";
           const val = v?.val;
           if (val === undefined || val === '') return;
-          // build param name: eq -> key, otherwise key__op
           const paramName = op === 'eq' ? k : `${k}__${op}`;
           params.append(paramName, val);
         });
         if (operation === "GET") {
           if (orderBy) params.append("orderBy", orderBy);
           if (orderDir) params.append("orderDir", orderDir);
-          // convert pageSize/pageNumber to limit/offset for backend
           const ps = pageSize ? Number(pageSize) : null;
           const pn = pageNumber ? Number(pageNumber) : 1;
           if (ps) {
@@ -382,7 +372,6 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
         const qs = params.toString();
         if (qs) url += `?${qs}`;
 
-        // Safety: DELETE must have filters (query params) or path params; refuse to send otherwise
         if (operation === 'DELETE') {
           const hasQueryFilters = !!qs;
           const hasPathParams = pathParamNames && pathParamNames.length > 0;
@@ -437,35 +426,35 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
       setLoading(false);
     }
   };
-
   // Helper to render a filter field for a column (uses shared control)
-  function renderFilterField(col) {
+  function renderFilterField(col, withOperator = true) {
     const colName = col.name || "";
     if (colName.toLowerCase().includes("password")) return null;
 
     const op = filters[col.name]?.op ?? "eq";
     const val = filters[col.name]?.val ?? "";
-
     return (
       <Box display={"flex"} gap={1} width="100%" key={col.name}>
-        <TextField
-          select
-          size="small"
-          value={op}
-          onChange={(e) =>
-            setFilters((f) => ({
-              ...f,
-              [col.name]: { ...(f[col.name] || {}), op: e.target.value },
-            }))
-          }
-          sx={{ width: 160 }}
-        >
-          {getOperatorsForColumn(col).map((o) => (
-            <MenuItem key={o.value} value={o.value}>
-              {o.label}
-            </MenuItem>
-          ))}
-        </TextField>
+        {
+          withOperator && (<TextField
+            select
+            size="small"
+            value={op}
+            onChange={(e) =>
+              setFilters((f) => ({
+                ...f,
+                [col.name]: { ...(f[col.name] || {}), op: e.target.value },
+              }))
+            }
+            sx={{ width: 160 }}
+          >
+            {getOperatorsForColumn(col).map((o) => (
+              <MenuItem key={o.value} value={o.value}>
+                {o.label}
+              </MenuItem>
+            ))}
+          </TextField>)
+        }
 
         <Box sx={{ flex: 1 }}>
           {renderColumnControl({
@@ -490,157 +479,21 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
     return colors[method] || "default";
   };
 
-  // Stable text input field to avoid losing focus during re-renders
-  const TextInputField = React.memo(({ col, value, onChange, disabled = false, type = 'text', label }) => {
-    const inputRef = useRef(null);
-    return (
-      <Grid item xs={12} md={6} key={col.name}>
-        <TextField
-          fullWidth
-          size="small"
-          label={label || col.name}
-          type={type}
-          inputRef={inputRef}
-          value={value ?? ""}
-          onChange={(e) => onChange && onChange(e.target.value)}
-          disabled={disabled}
-        />
-      </Grid>
-    );
-  }, (prev, next) => prev.value === next.value && prev.disabled === next.disabled);
+
 
   const handleFieldChange = useCallback((colName, value) => {
     setBodyFields((b) => ({ ...b, [colName]: value }));
   }, []);
 
-  const AdditionalFiltersToggle = () => {
-    if (!schema || !selectedTable) return null;
-    return (
-      <Grid container spacing={2} sx={{ mt: 1 }}>
-        <Grid item xs={12}>
-          <Button size="small" onClick={() => setFiltersCollapsed((s) => !s)}>
-            {filtersCollapsed ? "Show additional filters" : "Hide additional filters"}
-          </Button>
-        </Grid>
+  const handleFilterValueChange = useCallback((colName, value) => {
+    setFilters((f) => ({ ...(f || {}), [colName]: { ...((f || {})[colName] || {}), val: value } }));
+  }, []);
 
-        <Grid item xs={12}>
-          <Collapse in={!filtersCollapsed}>
-            <Grid container spacing={1}>
-              {/* Show filters for referenced table and join table columns for cross-table endpoints */}
-              {(() => {
-                // Detect cross-table endpoint pattern and capture referenced table, fk column, param name, and target table
-                const crossTableMatch =
-                  endpoint?.path &&
-                  endpoint.path.match(
-                    /\/([a-zA-Z0-9_]+)\/by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)\/([a-zA-Z0-9_]+)/
-                  );
-                if (crossTableMatch && schema) {
-                  const refTable = crossTableMatch[1]; // e.g., orders
-                  const fkCol = crossTableMatch[2]; // e.g., order_id
-                  const targetTable = crossTableMatch[4]; // e.g., products
-                  // Ensure fk column object
-                  let fkColObj = schema[refTable]?.columns?.find(
-                    (c) => c.name === fkCol
-                  );
-                  // Find join table by looking for a table with both FKs
-                  let joinTable = Object.keys(schema).find((t) => {
-                    const fks = schema[t]?.foreignKeys || [];
-                    return (
-                      fks.some(
-                        (fk) =>
-                          fk.columnName === fkCol && fk.foreignTable === refTable
-                      ) && fks.some((fk) => fk.foreignTable === targetTable)
-                    );
-                  });
-                  // Always include referenced table columns
-                  const refCols = schema[refTable]?.columns || [];
-                  // If join table found, include its columns except fkCol
-                  let joinCols = [];
-                  if (joinTable) {
-                    joinCols = (schema[joinTable]?.columns || []).filter(
-                      (c) => c.name !== fkCol
-                    );
-                  } else {
-                    joinCols = (schema[targetTable]?.columns || []).filter(
-                      (c) => c.name !== fkCol
-                    );
-                  }
-                  // Remove duplicates by name
-                  const seen = new Set();
-                  const allCols = [...refCols, ...joinCols].filter((c) => {
-                    if (seen.has(c.name)) return false;
-                    seen.add(c.name);
-                    return true;
-                  });
-                  // Always include fkCol as filter if not present
-                  if (fkColObj && !allCols.some((c) => c.name === fkCol)) {
-                    allCols.unshift(fkColObj);
-                  }
-                  // If still no columns, fallback to showing all columns from referenced and target table
-                  if (allCols.length === 0) {
-                    const fallbackCols = [
-                      ...(schema[refTable]?.columns || []),
-                      ...(schema[targetTable]?.columns || []),
-                    ].filter((c) => c.name !== fkCol);
-                    return fallbackCols
-                      .filter((c) => !(c.name in (pathParams || {})))
-                      .map((c) => (
-                        <Grid item xs={12} md={6} key={c.name}>
-                          {renderFilterField(c)}
-                        </Grid>
-                      ));
-                  }
-                  // Render filter fields for all columns
-                  return allCols
-                    .filter((c) => !(c.name in (pathParams || {})))
-                    .map((c) => (
-                      <Grid item xs={12} md={6} key={c.name}>
-                        {renderFilterField(c)}
-                      </Grid>
-                    ));
-                }
-                // Single-table GET: show only columns for this table except the FK used in the endpoint
-                const fkMatch = endpoint?.path?.match(
-                  /by_([a-zA-Z0-9_]+)\/:([a-zA-Z0-9_]+)/
-                );
-                let excludeCol = fkMatch ? fkMatch[1] : null;
-                return (
-                  schema &&
-                  selectedTable &&
-                  (schema[selectedTable]?.columns || [])
-                    .filter(
-                      (c) =>
-                        c.name !== excludeCol && !(c.name in (pathParams || {}))
-                    )
-                    .map((c) => (
-                      <Grid item xs={12} md={6} key={c.name}>
-                        {renderFilterField(c)}
-                      </Grid>
-                    ))
-                );
-              })()}
+  const handleFilterOpChange = useCallback((colName, op) => {
+    setFilters((f) => ({ ...(f || {}), [colName]: { ...((f || {})[colName] || {}), op } }));
+  }, []);
 
-              {operation === "GET" && (
-                <Grid container item spacing={1} sx={{ mt: 1 }}>
-                  <GetOptionsPanel
-                    columns={(schema[selectedTable]?.columns || [])}
-                    orderBy={orderBy}
-                    setOrderBy={setOrderBy}
-                    orderDir={orderDir}
-                    setOrderDir={setOrderDir}
-                    pageSize={pageSize}
-                    setPageSize={setPageSize}
-                    pageNumber={pageNumber}
-                    setPageNumber={setPageNumber}
-                  />
-                </Grid>
-              )}
-            </Grid>
-          </Collapse>
-        </Grid>
-      </Grid>
-    );
-  };
+
 
   if (!schema) {
     return (
@@ -710,7 +563,29 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
         </>
       )}
       {
-        (operation === 'DELETE' || (operation === "GET")) && (<AdditionalFiltersToggle />)
+        (operation === 'DELETE' || (operation === "GET")) && (
+          <AdditionalFiltersToggle
+            schema={schema}
+            selectedTable={selectedTable}
+            pathParams={pathParams}
+            filtersCollapsed={filtersCollapsed}
+            setFiltersCollapsed={setFiltersCollapsed}
+            filters={filters}
+            handleFilterValueChange={handleFilterValueChange}
+            handleFilterOpChange={handleFilterOpChange}
+            orderBy={orderBy}
+            setOrderBy={setOrderBy}
+            orderDir={orderDir}
+            setOrderDir={setOrderDir}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            pageNumber={pageNumber}
+            setPageNumber={setPageNumber}
+            foreignKeyOptions={foreignKeyOptions}
+            operation={operation}
+            renderFilterField={renderFilterField}
+          />
+        )
       }
 
 
@@ -992,7 +867,6 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
       )}
       {operation === "PUT" && (
         <Grid container spacing={2}>
-          {/* Section 1: Columns to update (except PK and FKs) */}
           <Grid item xs={12}>
             <Typography variant="subtitle2">Fields to Update</Typography>
           </Grid>
@@ -1008,201 +882,44 @@ const APITester = ({ connectionId, endpoint, selectedTable, operation, operators
               if (name.includes("password")) return null;
               const type = (col.type || "").toLowerCase();
 
-              // Only allow columns that are:
-              // - PK+FK
-              // - FK-only
-              // - neither PK nor FK
-              // Exclude PK-only
+
               if (isPk && !isFK) return null;
 
               // Foreign key dropdown -> Autocomplete
               const fk = (schema[selectedTable]?.foreignKeys || []).find(
                 (fk) => fk.columnName === col.name
               );
-              if (fk) {
-                const rawOpts = foreignKeyOptions[col.name];
-                const opts = Array.isArray(rawOpts) ? rawOpts : [];
-                const valKey = fk.foreignColumn || fk.foreign_column || "id";
-                const loading = rawOpts === undefined;
-                const selectedOption =
-                  opts.find((r) => String(r[valKey] ?? r[Object.keys(r || {})[0]] ?? "") === String(bodyFields[col.name] ?? "")) || null;
-                return (
-                  <Grid item xs={12} md={6} key={col.name}>
-                    <Autocomplete
-                      size="small"
-                      options={opts}
-                      loading={loading}
-                      noOptionsText={loading ? 'Loading...' : 'No options'}
-                      getOptionLabel={(row) => {
-                        const primary = row[valKey] ?? row[Object.keys(row || {})[0]] ?? '';
-                        const summary = formatRowSummary(row, valKey);
-                        return primary ? (summary ? `${primary} — ${summary}` : String(primary)) : JSON.stringify(row);
-                      }}
-                      filterOptions={(options, state) => {
-                        const q = state.inputValue.toLowerCase();
-                        return options.filter((r) => {
-                          const primary = String(r[valKey] ?? Object.values(r || {})[0] ?? '').toLowerCase();
-                          if (primary.includes(q)) return true;
-                          return Object.values(r || {}).some((v) => String(v ?? '').toLowerCase().includes(q));
-                        });
-                      }}
-                      value={selectedOption}
-                      onChange={(e, newVal) => {
-                        const v = newVal ? (newVal[valKey] ?? newVal[Object.keys(newVal || {})[0]] ?? '') : '';
-                        setBodyFields((b) => ({ ...b, [col.name]: v }));
-                      }}
-                      isOptionEqualToValue={(opt, valOpt) => {
-                        const ov = opt ? (opt[valKey] ?? opt[Object.keys(opt || {})[0]] ?? '') : '';
-                        const vv = valOpt ? (valOpt[valKey] ?? valOpt[Object.keys(valOpt || {})[0]] ?? '') : '';
-                        return String(ov) === String(vv);
-                      }}
-                      renderOption={(props, row) => {
-                        const { fullWidth, size, indicator, ...rest } = props;
-                        return (
-                          <li {...rest}>
-                            <Tooltip title={<pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(row, null, 2)}</pre>} placement="right">
-                              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                                <Typography variant="body2">{String(row[valKey] ?? Object.values(row || {})[0] ?? '')}</Typography>
-                                {formatRowSummary(row, valKey) ? <Typography variant="caption" color="text.secondary">{formatRowSummary(row, valKey)}</Typography> : null}
-                              </Box>
-                            </Tooltip>
-                          </li>
-                        );
-                      }}
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          fullWidth
-                          size="small"
-                          label={col.name}
-                          value={bodyFields[col.name] ?? ""}
-                          InputProps={{
-                            ...params.InputProps,
-                            endAdornment: (
-                              <>
-                                {loading ? <CircularProgress size={16} /> : null}
-                                {params.InputProps.endAdornment}
-                              </>
-                            ),
-                          }}
-                        />
-                      )}
-                    />
-                  </Grid>
-                );
-              }
-              // Enum
-              if (
-                Array.isArray(col.enumOptions) &&
-                col.enumOptions.length > 0
-              ) {
-                return (
-                  <Grid item xs={12} md={6} key={col.name}>
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label={col.name}
-                      value={bodyFields[col.name] ?? ""}
-                      onChange={(e) =>
-                        setBodyFields((b) => ({
-                          ...b,
-                          [col.name]: e.target.value,
-                        }))
-                      }
-                    >
-                      {col.enumOptions.map((ev) => (
-                        <MenuItem key={ev} value={ev}>
-                          {ev}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  </Grid>
-                );
-              }
-              // Boolean
-              if (["bool", "boolean"].some((t) => type.includes(t))) {
-                return (
-                  <Grid item xs={12} md={6} key={col.name}>
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label={col.name}
-                      value={bodyFields[col.name] ?? ""}
-                      onChange={(e) =>
-                        setBodyFields((b) => ({
-                          ...b,
-                          [col.name]: e.target.value,
-                        }))
-                      }
-                    >
-                      <MenuItem value="">Unset</MenuItem>
-                      <MenuItem value={true}>True</MenuItem>
-                      <MenuItem value={false}>False</MenuItem>
-                    </TextField>
-                  </Grid>
-                );
-              }
-              // Number
-              if (
-                [
-                  "int",
-                  "integer",
-                  "bigint",
-                  "smallint",
-                  "numeric",
-                  "decimal",
-                  "float",
-                  "double",
-                  "real",
-                ].some((t) => type.includes(t))
-              ) {
-                return (
-                  <TextInputField
-                    key={col.name}
-                    col={col}
-                    value={bodyFields[col.name] ?? ""}
-                    onChange={(v) => handleFieldChange(col.name, v)}
-                    type="number"
-                  />
-                );
-              }
-              // Date / datetime
-              if (
-                ["date", "timestamp", "datetime"].some((t) => type.includes(t))
-              ) {
-                const isDateOnly =
-                  type.includes("date") && !type.includes("time");
-                return (
-                  <TextInputField
-                    key={col.name}
-                    col={col}
-                    value={bodyFields[col.name] ?? ""}
-                    onChange={(v) => handleFieldChange(col.name, v)}
-                    type={isDateOnly ? "date" : "datetime-local"}
-                  />
-                );
-              }
-              // Default text
-              return (
-                <TextInputField
-                  key={col.name}
-                  col={col}
-                  value={bodyFields[col.name] ?? ""}
-                  onChange={(v) => handleFieldChange(col.name, v)}
-                />
-              );
+              return renderFilterField(col, false)
             })}
 
           {/* Section 2b: Additional WHERE filters (collapsed by default) */}
           <Grid item xs={12}>
-            <AdditionalFiltersToggle />
+            <AdditionalFiltersToggle
+              schema={schema}
+              selectedTable={selectedTable}
+              pathParams={pathParams}
+              filtersCollapsed={filtersCollapsed}
+              setFiltersCollapsed={setFiltersCollapsed}
+              filters={filters}
+              handleFilterValueChange={handleFilterValueChange}
+              handleFilterOpChange={handleFilterOpChange}
+              orderBy={orderBy}
+              setOrderBy={setOrderBy}
+              orderDir={orderDir}
+              setOrderDir={setOrderDir}
+              pageSize={pageSize}
+              setPageSize={setPageSize}
+              pageNumber={pageNumber}
+              setPageNumber={setPageNumber}
+              foreignKeyOptions={foreignKeyOptions}
+              operation={operation}
+              renderFilterField={renderFilterField}
+
+            />
           </Grid>
         </Grid>
       )}
-      {/* Tab Content */}
-      {/* TEST API TAB only */}
+
       <>
         <Grid container spacing={2} sx={{ mt: 1 }}>
           <Grid item xs={12}>

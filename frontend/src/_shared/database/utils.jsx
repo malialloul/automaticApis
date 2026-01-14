@@ -4,11 +4,6 @@ import { Box, TextField, MenuItem, Select, Autocomplete, Tooltip, Typography, Ci
 // Memoized TextField wrapper to avoid remounts and preserve focus
 const MemoTextField = React.memo(({ fullWidth = true, size = 'small', type, label, value, onChange, disabled = false, InputLabelProps, helperText }) => {
   const inputRef = React.useRef(null);
-  React.useEffect(() => {
-    console.debug(`MemoTextField mounted: ${label}`);
-    return () => console.debug(`MemoTextField unmounted: ${label}`);
-  }, [label]);
-  console.debug(`MemoTextField render: ${label}`, { value });
 
   return (
     <TextField

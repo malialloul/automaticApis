@@ -191,7 +191,6 @@ const Schema = () => {
 
       let payloadOrId = deleteTargetKey ?? (deleteTargetRow && deleteTargetRow[schema[dataTable].primaryKeys[0]]);
       if (payloadOrId === undefined || payloadOrId === null) throw new Error('Could not determine row id to delete');
-      console.log(payloadOrId);
 
       await deleteRecord(connectionId, dataTable, payloadOrId);
       window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Row deleted', severity: 'success' } }));
