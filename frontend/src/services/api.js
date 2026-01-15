@@ -40,6 +40,28 @@ export const getSwagger = async (connectionId) => {
   return response.data;
 };
 
+// Endpoints management
+export const createEndpoint = async (payload) => {
+  const response = await api.post(`/endpoints`, payload);
+  return response.data;
+};
+
+export const listEndpoints = async () => {
+  const response = await api.get(`/endpoints`);
+  return response.data;
+};
+
+export const getEndpoint = async (slug) => {
+  const response = await api.get(`/endpoints/${slug}`);
+  return response.data;
+};
+
+// Preview API: server-side translation of graph -> sample rows
+export const previewGraph = async (connectionId, graph, limit = 5) => {
+  const response = await api.post(`/connections/${connectionId}/preview`, { graph, limit });
+  return response.data;
+};
+
 export const getConnections = async () => {
   const response = await api.get('/connections');
   return response.data;

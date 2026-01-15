@@ -25,6 +25,10 @@ app.get('/health', (req, res) => {
 app.use('/api/connections', connectionsRouter);
 app.use('/api', autoIncrementRoute);
 
+// Endpoints management (saved builder endpoints)
+const { router: endpointsRouter } = require('./routes/endpoints');
+app.use('/api/endpoints', endpointsRouter);
+
   // Dynamic API routes middleware
   // This intercepts /api/:connectionId/:table requests and routes to the appropriate API router
   app.use('/api/:connectionId', (req, res, next) => {
