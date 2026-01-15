@@ -68,15 +68,28 @@ class QueryBuilder {
         if (!this.isValidColumn(column)) continue;
         const colType = this.getColumnType(column) || '';
         if (colType.includes('json')) {
-          // value must be valid JSON to compare against a json/jsonb column; compare using jsonb when possible
-          try {
-            // allow objects/arrays and JSON strings
-            const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-            // store JSON string param and cast to jsonb for comparison
-            whereClauses.push(`${this.sanitizeIdentifier(column)}::jsonb = ${this.addParam(JSON.stringify(parsed))}::jsonb`);
-          } catch (e) {
-            // Fallback: compare JSON column text representation to scalar value (permissive)
-            whereClauses.push(`${this.sanitizeIdentifier(column)}::text = ${this.addParam(value)}`);
+          // Handle JSON comparison based on dialect
+          if (this.dialect === 'postgres') {
+            try {
+              // value must be valid JSON to compare against a json/jsonb column; compare using jsonb when possible
+              const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+              // store JSON string param and cast to jsonb for comparison
+              whereClauses.push(`${this.sanitizeIdentifier(column)}::jsonb = ${this.addParam(JSON.stringify(parsed))}::jsonb`);
+            } catch (e) {
+              // Fallback: compare JSON column text representation to scalar value (permissive)
+              whereClauses.push(`${this.sanitizeIdentifier(column)}::text = ${this.addParam(value)}`);
+            }
+          } else if (this.dialect === 'mysql') {
+            try {
+              const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+              // MySQL uses CAST or JSON_CONTAINS for JSON comparison
+              whereClauses.push(`${this.sanitizeIdentifier(column)} = CAST(${this.addParam(JSON.stringify(parsed))} AS JSON)`);
+            } catch (e) {
+              // Fallback: compare as text
+              whereClauses.push(`CAST(${this.sanitizeIdentifier(column)} AS CHAR) = ${this.addParam(value)}`);
+            }
+          } else {
+            whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);
           }
         } else {
           whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);
@@ -225,12 +238,23 @@ class QueryBuilder {
         if (!this.isValidColumn(column)) continue;
         const colType = this.getColumnType(column) || '';
         if (colType.includes('json')) {
-          try {
-            const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-            whereClauses.push(`${this.sanitizeIdentifier(column)}::jsonb = ${this.addParam(JSON.stringify(parsed))}::jsonb`);
-          } catch (e) {
-            // Fallback: compare JSON column text representation to scalar value (permissive)
-            whereClauses.push(`${this.sanitizeIdentifier(column)}::text = ${this.addParam(value)}`);
+          if (this.dialect === 'postgres') {
+            try {
+              const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+              whereClauses.push(`${this.sanitizeIdentifier(column)}::jsonb = ${this.addParam(JSON.stringify(parsed))}::jsonb`);
+            } catch (e) {
+              // Fallback: compare JSON column text representation to scalar value (permissive)
+              whereClauses.push(`${this.sanitizeIdentifier(column)}::text = ${this.addParam(value)}`);
+            }
+          } else if (this.dialect === 'mysql') {
+            try {
+              const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+              whereClauses.push(`${this.sanitizeIdentifier(column)} = CAST(${this.addParam(JSON.stringify(parsed))} AS JSON)`);
+            } catch (e) {
+              whereClauses.push(`CAST(${this.sanitizeIdentifier(column)} AS CHAR) = ${this.addParam(value)}`);
+            }
+          } else {
+            whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);
           }
         } else {
           whereClauses.push(`${this.sanitizeIdentifier(column)} = ${this.addParam(value)}`);

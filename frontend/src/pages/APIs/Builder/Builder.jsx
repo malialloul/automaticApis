@@ -12,6 +12,24 @@ const Builder = ({ onClose }) => {
   const { currentConnection } = useConnection();
   const connectionId = currentConnection?.id;
 
+  // Validation helper
+  const isValidSQLIdentifier = (str) => {
+    if (!str || str.length === 0) return true; // empty is ok
+    return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(str);
+  };
+
+  const hasValidationErrors = () => {
+    // Check if any aggregation has invalid alias
+    if (aggregates.some(a => a.alias && !isValidSQLIdentifier(a.alias))) {
+      return true;
+    }
+    // Check if any filter has invalid param name
+    if (filters.some(f => f.param && !isValidSQLIdentifier(f.param))) {
+      return true;
+    }
+    return false;
+  };
+
   const [tables, setTables] = useState([]); // list of table names added to canvas
   const [outputFields, setOutputFields] = useState({}); // { tableName: [fieldName] }
   const [joins, setJoins] = useState([]); // [{fromTable,toTable,fromColumn,toColumn,type}]
@@ -225,7 +243,17 @@ const Builder = ({ onClose }) => {
 
     const groupByFormatted = groupBy.map((g) => `${getAlias(g.table)}.${g.field}`);
 
-    const aggsFormatted = aggregates.map((a) => ({ type: a.func, field: `${getAlias(a.table)}.${a.field}`, as: a.alias || `${a.func.toLowerCase()}_${a.field}` }));
+    // Ensure all aggregations have proper aliases for HAVING clause to work
+    const aggsFormatted = aggregates.map((a) => {
+      // Always generate a consistent alias: either use provided one or generate from func_fieldname
+      const fieldNameOnly = a.field.split('.').pop(); // strip table alias if present
+      const generatedAlias = a.alias || `${a.func.toLowerCase()}_${fieldNameOnly}`;
+      return { 
+        type: a.func, 
+        field: `${getAlias(a.table)}.${a.field}`, 
+        as: generatedAlias 
+      };
+    });
 
     const fields = [];
     Object.entries(effectiveOutputFields).forEach(([t, fs]) => {
@@ -238,7 +266,23 @@ const Builder = ({ onClose }) => {
     // include aggregate aliases
     aggsFormatted.forEach((a) => fields.push(a.as));
 
-    const havingFormatted = having.map((h) => ({ aggField: h.aggField, op: h.op, value: h.value }));
+    const havingFormatted = having.map((h) => {
+      // Find the aggregation that matches the alias to get the function and field
+      const matchingAgg = aggregates.find(a => {
+        const fieldNameOnly = a.field.split('.').pop();
+        const alias = a.alias || `${a.func.toLowerCase()}_${fieldNameOnly}`;
+        return alias === h.aggField;
+      });
+      
+      return {
+        aggField: h.aggField, // The alias name
+        func: matchingAgg ? matchingAgg.func : 'COUNT', // The aggregation function (AVG, COUNT, etc.)
+        field: matchingAgg ? matchingAgg.field : 'id', // The field being aggregated (e.g., "age")
+        table: matchingAgg ? matchingAgg.table : undefined, // The table
+        op: h.op,
+        value: h.value,
+      };
+    });
 
     const payload = {
       name: endpointName,
@@ -293,11 +337,17 @@ const Builder = ({ onClose }) => {
       aggregations: payload.aggregations,
       having: payload.having,
     };
+    
+    // Include connectionId so we can filter endpoints by connection
+    payload.connectionId = connectionId;
 
     try {
       const res = await createEndpoint(payload);
       setSaveOpen(false);
-      setSnack({ msg: `Saved! Link: /api/${res.slug}`, severity: 'success', action: { copy: `/api/${res.slug}` } });
+      // Close the panel and notify parent with success info
+      if (onClose) {
+        onClose({ success: true, slug: res.slug, message: `API saved! Endpoint: /api/${res.slug}` });
+      }
       try { await navigator.clipboard.writeText(`/api/${res.slug}`); } catch (e) {}
     } catch (err) {
       const msg = err.response?.data?.error || err.message || 'Save failed';
@@ -317,62 +367,15 @@ const Builder = ({ onClose }) => {
       <Divider />
 
       <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1 }}>
-        <Typography variant="body2" color="text.secondary">Quick start: Add a table → choose fields → optionally add filters or summaries → Save and get a link.</Typography>
-        <Button size="small" onClick={() => {
-          // quick demo: apply first template heuristically if available
-          const demo = 'top-selling';
-          // reuse SchemaSidebar's onApplyTemplate logic by calling it via ref is complex — just simulate by setting tables heuristically
-          const findTableWith = (cols) => Object.keys(schema || {}).find((t) => (schema[t]?.columns || []).some((c) => cols.includes(c.name)));
-          const ordersTable = findTableWith(['amount', 'total_amount']);
-          const productsTable = findTableWith(['name', 'product_name']);
-          const present = [ordersTable, productsTable].filter(Boolean);
-          setTables(present);
-          const of = {};
-          if (productsTable) of[productsTable] = ['id', 'name'];
-          if (ordersTable) of[ordersTable] = ['id', 'product_id', 'amount'];
-          setOutputFields(of);
-          if (ordersTable && productsTable) {
-            const fk = schema[ordersTable]?.foreignKeys?.find(f => f.foreignTable === productsTable);
-            if (fk) setJoins([{ fromTable: ordersTable, toTable: productsTable, fromColumn: fk.columnName, toColumn: fk.foreignColumn || fk.foreign_column || 'id', type: 'LEFT' }]);
-        }}}>Try example</Button>
+        <Typography variant="body2" color="text.secondary">Add a table → choose fields → optionally add filters or summaries → Save.</Typography>
       </Box>
       <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-        <Grid item xs={3} sx={{ minHeight: 0 }}>
+        <Grid item xs={2.5} sx={{ minHeight: 0 }}>
           <Paper sx={{ p: 1, height: '100%', overflow: 'auto' }}>
-            <SchemaSidebar schema={schema} onAddTable={addTable} onApplyTemplate={(name) => {
-              // Generic template application: heuristics-based selection with friendly defaults
-              const findTableWith = (cols) => {
-                return Object.keys(schema || {}).find((t) => (schema[t]?.columns || []).some((c) => cols.includes(c.name)));
-              };
-
-              if (name === 'top-selling') {
-                // find orders-like and products-like tables by column names heuristics
-                const ordersTable = findTableWith(['amount', 'total_amount', 'order_amount', 'quantity']);
-                const productsTable = findTableWith(['name', 'title', 'product_name']);
-                const present = [ordersTable, productsTable].filter(Boolean);
-                if (present.length === 0) return;
-                setTables(present);
-                const of = {};
-                if (productsTable) of[productsTable] = ['id', 'name'];
-                if (ordersTable) of[ordersTable] = ['id', 'product_id', 'amount'];
-                setOutputFields(of);
-                // Add relationship if detected by foreign key
-                if (ordersTable && productsTable) {
-                  const fk = schema[ordersTable]?.foreignKeys?.find(f => f.foreignTable === productsTable);
-                  if (fk) setJoins([{ fromTable: ordersTable, toTable: productsTable, fromColumn: fk.columnName, toColumn: fk.foreignColumn || fk.foreign_column || 'id', type: 'LEFT' }]);
-                }
-              }
-
-              if (name === 'monthly-revenue') {
-                const ordersTable = findTableWith(['created_at', 'created', 'order_date', 'date', 'amount', 'total_amount']);
-                if (!ordersTable) return;
-                setTables([ordersTable]);
-                setOutputFields({ [ordersTable]: ['id', 'created_at', 'amount'] });
-              }
-            }} />
+            <SchemaSidebar schema={schema} onAddTable={addTable} />
           </Paper>
         </Grid>
-        <Grid item xs={6} sx={{ minHeight: 0 }}>
+        <Grid item xs={4.5} sx={{ minHeight: 0 }}>
           <Paper sx={{ height: '100%', p: 1, overflow: 'auto' }}>
             <Canvas
               tables={tables}
@@ -417,8 +420,8 @@ const Builder = ({ onClose }) => {
             />
           </Paper>
         </Grid>
-        <Grid item xs={3} sx={{ minHeight: 0 }}>
-          <Paper sx={{ p: 1, height: '100%', overflow: 'auto' }}>
+        <Grid item xs={5} sx={{ minHeight: 0 }}>
+          <Paper sx={{ p: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <PreviewPanel
               connectionId={connectionId}
               primaryTable={tables[0]}
@@ -436,6 +439,7 @@ const Builder = ({ onClose }) => {
               groupDraft={groupDraft}
               openHavingFor={openHavingFor}
               havingDraft={havingDraft}
+              hasValidationErrors={hasValidationErrors()}
             />
           </Paper>
         </Grid>

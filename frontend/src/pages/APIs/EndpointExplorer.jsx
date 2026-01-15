@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useContext } from "react";
+import React, { useState, useEffect, useMemo, useRef, useContext, forwardRef, useImperativeHandle } from "react";
 import { Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import {
   Paper,
@@ -48,7 +48,7 @@ const getMethodColor = (method) => {
   return colors[method] || "default";
 };
 
-function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
+const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, onTryIt, onGetCode }, ref) {
     const { data: remoteEndpoints, loading: remoteEndpointsLoading } = useGetRemoteEndpoints({ connectionId });
   
   const theme = useTheme();
@@ -68,6 +68,17 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
   const [savedPreviewError, setSavedPreviewError] = useState(null);
   const [showRawSql, setShowRawSql] = useState(true);
   const baseUrl = window.location.origin;
+
+  // Expose refresh method to parent via ref
+  const refreshEndpoints = () => {
+    listEndpoints()
+      .then((res) => setSavedEndpoints(res || []))
+      .catch(() => setSavedEndpoints([]));
+  };
+
+  useImperativeHandle(ref, () => ({
+    refresh: refreshEndpoints
+  }));
 
   // Filtering
   const filteredTables = useMemo(() => {
@@ -182,9 +193,9 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
         {/* Saved APIs */}
         <Box sx={{ mb: 2 }}>
           <Typography variant="subtitle2">Saved APIs</Typography>
-          {savedEndpoints.length === 0 && <Typography variant="caption" color="text.secondary">No saved APIs yet.</Typography>}
+          {savedEndpoints.filter(ep => ep.connectionId === connectionId).length === 0 && <Typography variant="caption" color="text.secondary">No saved APIs for this connection.</Typography>}
           <List dense>
-            {savedEndpoints.map((ep) => (
+            {savedEndpoints.filter(ep => ep.connectionId === connectionId).map((ep) => (
               <ListItem key={ep.slug} sx={{ pl: 0 }}>
                 <MuiListItemText primary={<b>{ep.name}</b>} secondary={ep.path || `/${ep.slug}`} />
                 <Button size="small" onClick={() => handleShowSavedSql(ep)}>Show SQL</Button>
@@ -332,29 +343,11 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
                       >
                         Try it
                       </Button>
-                      <Button
-                        size="small"
-                        startIcon={<CodeIcon />}
-                        onClick={() =>
-                          onGetCode
-                            ? onGetCode(endpoint)
-                            : handleGetCode(endpoint)
-                        }
-                      >
-                        Get Code
-                      </Button>
                       {endpoint._meta?.canonical && (
                         <Tooltip title="Canonical pair path">
                           <Chip label="Canonical" size="small" />
                         </Tooltip>
                       )}
-                      <Button
-                        size="small"
-                        startIcon={<InfoIcon />}
-                        onClick={() => openSidebar(endpoint)}
-                      >
-                        Details
-                      </Button>
                     </Stack>
                   </ListItem>
                 ))}
@@ -485,6 +478,6 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
       </Drawer>
     </Paper>
   );
-}
+});
 
 export default EndpointExplorer;

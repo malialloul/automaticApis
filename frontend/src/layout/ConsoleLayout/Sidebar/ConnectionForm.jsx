@@ -136,9 +136,9 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
               >
                 <MenuItem value="postgres">PostgreSQL</MenuItem>
                 <MenuItem value="mysql">MySQL</MenuItem>
-                <MenuItem value="mongodb">MongoDB</MenuItem>
+                {/* <MenuItem value="mongodb">MongoDB</MenuItem>
                 <MenuItem value="mssql">MS SQL Server</MenuItem>
-                <MenuItem value="oracle">Oracle</MenuItem>
+                <MenuItem value="oracle">Oracle</MenuItem> */}
               </Select>
 
               {/* Derived validation flags */}

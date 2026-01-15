@@ -1,9 +1,9 @@
-import { Container, Grid, Drawer, CircularProgress, Button, Box } from '@mui/material';
+import { Container, Grid, Drawer, CircularProgress, Button, Box, Snackbar, Alert } from '@mui/material';
 import Builder from './Builder/Builder';
 import EndpointExplorer from './EndpointExplorer';
 import APITester from './APIsTester/APITester';
 
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, useRef } from 'react';
 import { useConnection } from '../../_shared/database/useConnection';
 import { useLoadOperators } from '../../_shared/database/useLoadOperators';
 import { AppContext } from '../../App';
@@ -30,6 +30,19 @@ const APIs = () => {
   const handleCloseCode = () => setCodeOpen(false);
  
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [successSnack, setSuccessSnack] = useState(null);
+  const explorerRef = useRef(null);
+
+  const handleBuilderClose = (result) => {
+    setBuilderOpen(false);
+    if (result?.success) {
+      setSuccessSnack(result.message);
+      // Refresh the endpoints list
+      if (explorerRef.current?.refresh) {
+        explorerRef.current.refresh();
+      }
+    }
+  };
 
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -39,6 +52,7 @@ const APIs = () => {
       </Box>
 
       <EndpointExplorer
+        ref={explorerRef}
         connectionId={connection?.id}
         onTryIt={handleTryIt}
         onGetCode={handleGetCode}
@@ -46,9 +60,21 @@ const APIs = () => {
 
       <Drawer anchor="right" open={builderOpen} onClose={() => setBuilderOpen(false)} PaperProps={{ sx: { width: 1000 } }}>
         {builderOpen && (
-          <Builder onClose={() => setBuilderOpen(false)} />
+          <Builder onClose={handleBuilderClose} />
         )}
       </Drawer>
+
+      {/* Success Snackbar */}
+      <Snackbar 
+        open={!!successSnack} 
+        autoHideDuration={6000} 
+        onClose={() => setSuccessSnack(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSuccessSnack(null)} severity="success" sx={{ width: '100%' }}>
+          {successSnack}
+        </Alert>
+      </Snackbar>
 
       {/* Try It Panel */}
       <Drawer anchor="right" open={tryItOpen} onClose={handleCloseTryIt} PaperProps={{ sx: { width: 600 } }}>
