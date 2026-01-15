@@ -41,17 +41,22 @@ class QueryBuilder {
 
     let query = `SELECT * FROM ${this.sanitizeIdentifier(this.tableName)}`;
 
-    // Build WHERE clause, support operator suffixes: __gt, __gte, __lt, __lte, __like
+    // Build WHERE clause, support operator suffixes: __gt, __gte, __lt, __lte, __like, __contains, __startswith, __endswith
     const whereClauses = [];
     for (const [rawColumn, value] of Object.entries(filters)) {
       // detect operator suffix
-      const opMatch = rawColumn.match(/(.+?)__(gt|gte|lt|lte|like)$/);
+      const opMatch = rawColumn.match(/(.+?)__(gt|gte|lt|lte|like|contains|startswith|endswith)$/);
       if (opMatch) {
         const column = opMatch[1];
         const op = opMatch[2];
         if (!this.isValidColumn(column)) continue;
-        if (op === 'like') {
-          whereClauses.push(`${this.sanitizeIdentifier(column)} LIKE ${this.addParam(value)}`);
+        if (['like','contains','startswith','endswith'].includes(op)) {
+          // Normalize wildcard handling for string-like ops
+          let v = value;
+          if (op === 'contains') v = `%${value}%`;
+          else if (op === 'startswith') v = `${value}%`;
+          else if (op === 'endswith') v = `%${value}`;
+          whereClauses.push(`${this.sanitizeIdentifier(column)} LIKE ${this.addParam(v)}`);
         } else {
           const map = { gt: '>', gte: '>=', lt: '<', lte: '<=' };
           const sqlOp = map[op] || '=';
@@ -199,13 +204,17 @@ class QueryBuilder {
   buildDeleteWhere(filters = {}) {
     const whereClauses = [];
     for (const [rawColumn, value] of Object.entries(filters)) {
-      const opMatch = rawColumn.match(/(.+?)__(gt|gte|lt|lte|like)$/);
+      const opMatch = rawColumn.match(/(.+?)__(gt|gte|lt|lte|like|contains|startswith|endswith)$/);
       if (opMatch) {
         const column = opMatch[1];
         const op = opMatch[2];
         if (!this.isValidColumn(column)) continue;
-        if (op === 'like') {
-          whereClauses.push(`${this.sanitizeIdentifier(column)} LIKE ${this.addParam(value)}`);
+        if (['like','contains','startswith','endswith'].includes(op)) {
+          let v = value;
+          if (op === 'contains') v = `%${value}%`;
+          else if (op === 'startswith') v = `${value}%`;
+          else if (op === 'endswith') v = `%${value}`;
+          whereClauses.push(`${this.sanitizeIdentifier(column)} LIKE ${this.addParam(v)}`);
         } else {
           const map = { gt: '>', gte: '>=', lt: '<', lte: '<=' };
           const sqlOp = map[op] || '=';

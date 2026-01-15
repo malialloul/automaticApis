@@ -264,11 +264,16 @@ class SchemaInspector {
   async getPrimaryKeys(tableName) {
     if (this.dialect === 'postgres') {
       const query = `
-        SELECT a.attname as column_name
-        FROM pg_index i
-        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-        WHERE i.indrelid = $1::regclass
-        AND i.indisprimary;
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.constraint_schema = kcu.constraint_schema
+          AND tc.table_name = kcu.table_name
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_name = $1
+        AND tc.table_schema = 'public'
+        ORDER BY kcu.ordinal_position;
       `;
       const result = await this.pool.query(query, [tableName]);
       return result.rows.map(row => row.column_name);

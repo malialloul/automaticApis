@@ -1,7 +1,7 @@
 const express = require('express');
 const connectionManager = require('../utils/connectionManager');
 const SchemaInspector = require('../middleware/schemaInspector');
-const APIGenerator = require('../middleware/apiGenerator2');
+const APIGenerator = require('../middleware/apiGenerator');
 const SwaggerGenerator = require('../middleware/swaggerGenerator');
 
 const router = express.Router();
@@ -164,6 +164,59 @@ router.get('/:id/schema', (req, res) => {
   }
 
   res.json(schema);
+});
+
+/**
+ * GET /api/connections/:id/operators
+ * Return operator options per table and column (useful for UIs to show valid operators)
+ */
+router.get('/:id/operators', (req, res) => {
+  const connectionId = req.params.id;
+  const schema = schemaCache.get(connectionId);
+
+  if (!schema) {
+    return res.status(404).json({ error: 'Schema not found. Please introspect the database first.' });
+  }
+
+  const operators = {};
+  for (const [tableName, table] of Object.entries(schema)) {
+    operators[tableName] = {};
+    for (const col of table.columns || []) {
+      const type = (col.type || '').toLowerCase();
+      let ops = [];
+      if (Array.isArray(col.enumOptions) && col.enumOptions.length > 0) {
+        ops = [{ value: 'eq', label: '=' }];
+      } else if (["bool", "boolean"].some((t) => type.includes(t))) {
+        ops = [{ value: 'eq', label: '=' }];
+      } else if (["date", "timestamp", "datetime", "time"].some((t) => type.includes(t))) {
+        ops = [
+          { value: 'eq', label: '=' },
+          { value: 'gt', label: '>' },
+          { value: 'gte', label: '>=' },
+          { value: 'lt', label: '<' },
+          { value: 'lte', label: '<=' },
+        ];
+      } else if (["int", "integer", "bigint", "smallint", "numeric", "decimal", "float", "double", "real"].some((t) => type.includes(t))) {
+        ops = [
+          { value: 'eq', label: '=' },
+          { value: 'gt', label: '>' },
+          { value: 'gte', label: '>=' },
+          { value: 'lt', label: '<' },
+          { value: 'lte', label: '<=' },
+        ];
+      } else {
+        ops = [
+          { value: 'eq', label: '=' },
+          { value: 'contains', label: 'contains' },
+          { value: 'startswith', label: 'starts with' },
+          { value: 'endswith', label: 'ends with' },
+        ];
+      }
+      operators[tableName][col.name] = ops;
+    }
+  }
+
+  res.json(operators);
 });
 
 /**

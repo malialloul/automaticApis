@@ -1,6 +1,7 @@
 import { Container, Box, Typography, Button, Chip, Paper } from '@mui/material';
-import { ArrowForward, PlayArrow, Circle, ArrowRight } from '@mui/icons-material';
+import { ArrowForward, PlayArrow, Circle } from '@mui/icons-material';
 import { motion } from 'motion/react';
+import { Link as RouterLink } from "react-router-dom";
 
 const MotionBox = motion.create(Box);
 const MotionPaper = motion.create(Paper);
@@ -96,6 +97,8 @@ export default function Hero() {
             <Button
               variant="contained"
               size="large"
+              component={RouterLink}
+              to="/dashboard"
               endIcon={<ArrowForward />}
               sx={{
                 px: 4,
