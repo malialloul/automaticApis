@@ -1,77 +1,31 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
-  Link,
   useLocation,
-  Navigate,
 } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   CssBaseline,
   ThemeProvider,
-  createTheme,
-  AppBar,
-  Toolbar,
-  Typography,
-  Box,
-  Tabs,
-  Tab,
-  Container,
-  Chip,
-  IconButton,
-  Avatar,
-  Badge,
-  Tooltip,
-  Menu,
-  MenuItem,
 } from "@mui/material";
-import { useConnection } from "./hooks/useConnection";
+import { useConnection } from "./_shared/database/useConnection";
 import Home from "./pages/Home";
-import Schema from "./pages/Schema";
-import APIs from "./pages/APIs";
-import Documentation from "./pages/Documentation";
-import Pricing from "./pages/Pricing";
-// Removed Login/Signup and auth
-import Contact from "./pages/Contact";
-import DashboardPage from "./pages/Dashboard";
 import { createAppTheme } from "./styles/theme";
-import Navigation from "./components/Navigation";
-import ConsoleLayout from "./components/ConsoleLayout";
-import ERDiagramViewer from "./pages/ERDiagramViewer";
+import Navigation from "./layout/Navigation";
+import ConsoleLayout from "./layout/ConsoleLayout/ConsoleLayout";
+import { PortalRoutes, PortalRoutesPaths } from "./routes/portal.routes";
+import { useLoadSchema } from "./_shared/database/useLoadSchema";
 
-const queryClient = new QueryClient();
+export const AppContext = React.createContext({ schema: null, refreshSchema: null, isLoadingSchema: false, schemaError: null });
 
 function AppContent() {
-  const {
-    currentConnection,
-    selectConnection,
-    saveCurrentConnection,
-    deleteConnection,
-    updateSchema,
-  } = useConnection();
-
-  const handleConnectionSaved = (connection) => {
-    saveCurrentConnection(connection);
-  };
-
-  const handleSchemaLoaded = (schemaData) => {
-    if (schemaData) {
-      updateSchema(schemaData);
-    }
-  };
   const [darkMode, setDarkMode] = useState(true);
   const appTheme = useMemo(() => createAppTheme(darkMode), [darkMode]);
 
   const location = useLocation();
-  const isConsoleRoute = [
-    "/dashboard",
-    "/schema",
-    "/er-diagram",
-    "/db-apis",
-    "/documentation",
-  ].some((p) => location.pathname.startsWith(p));
+  const isConsoleRoute = Object.entries(PortalRoutesPaths).some(([, path]) => location.pathname.startsWith(path));
+
   return (
     <ThemeProvider theme={appTheme}>
       <CssBaseline />
@@ -80,41 +34,11 @@ function AppContent() {
       )}
       {isConsoleRoute ? (
         <ConsoleLayout darkMode={darkMode} setDarkMode={setDarkMode}>
-          <Routes>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route
-              path="/schema"
-              element={<Schema connection={currentConnection} />}
-            />
-            <Route
-              path="/er-diagram"
-              element={<ERDiagramViewer connection={currentConnection} />}
-            />
-            <Route
-              path="/db-apis"
-              element={<APIs connection={currentConnection} />}
-            />
-            <Route
-              path="/documentation"
-              element={
-                currentConnection ? (
-                  <Documentation connection={currentConnection} />
-                ) : (
-                  <Navigate
-                    to="/dashboard"
-                    replace
-                    state={{ notice: "Connect to a database to view Docs." }}
-                  />
-                )
-              }
-            />
-          </Routes>
+          <PortalRoutes />
         </ConsoleLayout>
       ) : (
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/pricing" element={<Pricing />} />
-          <Route path="/contact" element={<Contact />} />
         </Routes>
       )}
     </ThemeProvider>
@@ -122,12 +46,16 @@ function AppContent() {
 }
 
 function App() {
+  const {
+    currentConnection,
+  } = useConnection();
+  const { data: schema, isLoading, error, refetch: refreshSchema } = useLoadSchema({ connectionId: currentConnection?.id });
   return (
-    <QueryClientProvider client={queryClient}>
+    <AppContext.Provider value={{ schema, refreshSchema, isLoadingSchema: isLoading, schemaError: error }}>
       <Router>
         <AppContent />
       </Router>
-    </QueryClientProvider>
+    </AppContext.Provider>
   );
 }
 

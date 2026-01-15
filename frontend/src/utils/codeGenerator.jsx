@@ -47,17 +47,6 @@ function backendExpressSnippet(
   const lastPart = pathParts[pathParts.length - 1];
   const secondLastPart = pathParts[pathParts.length - 2];
 
-  // Detect new relationship endpoint pattern: /by_{fkCol}/:{fkCol}/relatedTable
-  const isRelationshipByFK = pathParts.some((p) => p.startsWith("by_")) && pathParts.some((p) => p.startsWith(":"));
-  let fkParam = null;
-  if (isRelationshipByFK) {
-    // e.g., by_order_id/:order_id/products
-    const byIdx = pathParts.findIndex((p) => p.startsWith("by_"));
-    if (byIdx !== -1 && pathParts[byIdx + 1] && pathParts[byIdx + 1].startsWith(":")) {
-      fkParam = pathParts[byIdx + 1].slice(1);
-    }
-  }
-
   // Detail if last part starts with ":" (assume it is ID)
   const isDetail = lastPart.startsWith(":");
 
@@ -69,17 +58,8 @@ function backendExpressSnippet(
       : pathParts.some((part) => part.startsWith(":"));
 
   if (method === "GET") {
-    if (isRelationshipByFK && fkParam) {
-      lines.push(`// GET ${safeTable} related by ${fkParam}`);
-      lines.push(`router.get('${path}', async (req, res) => {`);
-      lines.push(`  try {`);
-      lines.push(`    // This endpoint returns related records by foreign key: ${fkParam}`);
-      lines.push(`    const sql = \`SELECT * FROM "${safeTable}" WHERE "${fkParam}"=$1\`;`);
-      lines.push(`    const { rows } = await pool.query(sql, [req.params.${fkParam}]);`);
-      lines.push(`    res.json(rows);`);
-      lines.push(`  } catch (err) { res.status(500).json({ error: err.message }); }`);
-      lines.push(`});`);
-    } else if (!isDetail && !isNestedChild) {
+    // Standard GET behavior: list, nested filtered by parent, or detail by id
+    if (!isDetail && !isNestedChild) {
       lines.push(`// GET all ${safeTable}`);
       lines.push(`router.get('${path}', async (req, res) => {`);
       lines.push(`  try {`);
@@ -172,8 +152,8 @@ function backendExpressSnippet(
         `    const sql = \`INSERT INTO "${safeTable}" (${keys
           .map((k) => '"' + k + '"')
           .join(", ")}) VALUES (${keys
-          .map((_, i) => "$" + (i + 1))
-          .join(", ")}) RETURNING *\`;`
+            .map((_, i) => "$" + (i + 1))
+            .join(", ")}) RETURNING *\`;`
       );
       lines.push(`    const { rows } = await pool.query(sql, values);`);
       lines.push(`    res.status(201).json(rows[0]);`);
@@ -311,8 +291,7 @@ function backendFastAPISnippet(
     lines.push(`# ${method} ${safeTable}`);
     lines.push(`@app.${method.toLowerCase()}("${path}")`);
     lines.push(
-      `async def ${method.toLowerCase()}_${safeTable}(body: dict, db: Session = Depends(get_db)${
-        isNestedChild ? ", " + fkCols.map((fk) => fk + ": int").join(", ") : ""
+      `async def ${method.toLowerCase()}_${safeTable}(body: dict, db: Session = Depends(get_db)${isNestedChild ? ", " + fkCols.map((fk) => fk + ": int").join(", ") : ""
       }):`
     );
     lines.push(`    try:`);
@@ -392,17 +371,14 @@ function backendJavaSpringSnippet(
   const javaMethod = method.toLowerCase();
   lines.push(`// ${method} ${safeTable}`);
   lines.push(
-    `@${
-      javaMethod === "get" ? "GetMapping" : capitalize(javaMethod)
+    `@${javaMethod === "get" ? "GetMapping" : capitalize(javaMethod)
     }("${path.replace(/:\w+/g, "{id}")}")`
   );
   lines.push(
-    `public ResponseEntity<?> ${javaMethod}${capitalize(safeTable)}(${
-      isDetail ? "@PathVariable Long " + idCol : ""
-    }${
-      isNestedChild
-        ? ", " + fkCols.map((fk) => `@PathVariable Long ${fk}`).join(", ")
-        : ""
+    `public ResponseEntity<?> ${javaMethod}${capitalize(safeTable)}(${isDetail ? "@PathVariable Long " + idCol : ""
+    }${isNestedChild
+      ? ", " + fkCols.map((fk) => `@PathVariable Long ${fk}`).join(", ")
+      : ""
     }) {`
   );
   lines.push(`    try {`);
@@ -491,8 +467,8 @@ function backendGoGinSnippet(
           `    if err := db.Where("${filters
             .map((fk) => fk + " = ?")
             .join(" AND ")}", ${filters.join(
-            ", "
-          )}).Find(&rows).Error; err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }`
+              ", "
+            )}).Find(&rows).Error; err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }`
         );
       } else {
         lines.push(
