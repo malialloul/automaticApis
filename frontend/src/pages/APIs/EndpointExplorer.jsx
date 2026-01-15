@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useContext } from "react";
+import { Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import {
   Paper,
   Typography,
@@ -31,7 +32,7 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import InfoIcon from "@mui/icons-material/Info";
 import LinkIcon from "@mui/icons-material/Link";
-import { getSchema } from "../../services/api";
+import { getSchema, listEndpoints, previewGraph } from "../../services/api";
 import { useTheme } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
 import { AppContext } from "../../App";
@@ -61,6 +62,11 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
   const [sidebar, setSidebar] = useState({ open: false, endpoint: null });
   const [copied, setCopied] = useState(null);
 
+  const [savedEndpoints, setSavedEndpoints] = useState([]);
+  const [savedPreview, setSavedPreview] = useState(null);
+  const [savedPreviewOpen, setSavedPreviewOpen] = useState(false);
+  const [savedPreviewError, setSavedPreviewError] = useState(null);
+  const [showRawSql, setShowRawSql] = useState(true);
   const baseUrl = window.location.origin;
 
   // Filtering
@@ -87,6 +93,42 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
   // Placeholder for code and try-it
   const handleTryIt = (endpoint) => alert("Try it panel coming soon!");
   const handleGetCode = (endpoint) => alert("Code modal coming soon!");
+
+  // Load saved endpoints
+  useEffect(() => {
+    let mounted = true;
+    listEndpoints()
+      .then((res) => {
+        if (!mounted) return;
+        setSavedEndpoints(res || []);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setSavedEndpoints([]);
+      });
+    return () => { mounted = false; };
+  }, [remoteEndpoints]);
+
+  const handleShowSavedSql = async (endpoint) => {
+    if (!connectionId) {
+      setSavedPreviewError('No active connection selected — select a connection to preview SQL.');
+      setSavedPreviewOpen(true);
+      return;
+    }
+    setSavedPreview(null);
+    setSavedPreviewError(null);
+    try {
+      const graphToUse = endpoint.graph || endpoint;
+      const res = await previewGraph(connectionId, graphToUse, 5);
+      setSavedPreview(res);
+      setSavedPreviewOpen(true);
+    } catch (err) {
+      setSavedPreviewError(err.response?.data?.error || err.message || 'Preview failed');
+      setSavedPreviewOpen(true);
+    }
+  };
+
+  const handleCloseSavedPreview = () => { setSavedPreviewOpen(false); setSavedPreview(null); setSavedPreviewError(null); };
 
   // Navigate to a specific table in the list and focus it
   const goToTable = (tableName) => {
@@ -133,8 +175,39 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
             onChange={(e) => setSearch(e.target.value)}
             sx={{ minWidth: 180 }}
           />
-         
+          <Box sx={{ flex: 1 }} />
+          <Button size="small" onClick={() => { /* refresh saved endpoints */ listEndpoints().then(res => setSavedEndpoints(res || [])); }}>Refresh saved APIs</Button>
         </Stack>
+
+        {/* Saved APIs */}
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle2">Saved APIs</Typography>
+          {savedEndpoints.length === 0 && <Typography variant="caption" color="text.secondary">No saved APIs yet.</Typography>}
+          <List dense>
+            {savedEndpoints.map((ep) => (
+              <ListItem key={ep.slug} sx={{ pl: 0 }}>
+                <MuiListItemText primary={<b>{ep.name}</b>} secondary={ep.path || `/${ep.slug}`} />
+                <Button size="small" onClick={() => handleShowSavedSql(ep)}>Show SQL</Button>
+                <Button size="small" onClick={() => copyToClipboard(ep.path || `/${ep.slug}`)}>Copy</Button>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    const table = ep.graph?.source?.table || ep.source?.table;
+                    if (!table) {
+                      setSavedPreviewError('No source table found on this saved endpoint — open it in the Builder and select a table.');
+                      setSavedPreviewOpen(true);
+                      return;
+                    }
+                    if (onTryIt) onTryIt({ table, method: ep.method || 'GET', path: ep.path || `/${ep.slug}`, endpoint: ep });
+                    else handleTryIt(ep);
+                  }}
+                >
+                  Try it
+                </Button>
+              </ListItem>
+            ))}
+          </List>
+        </Box>
         <Divider />
       </Box>
 
@@ -290,6 +363,35 @@ function EndpointExplorer({ connectionId, onTryIt, onGetCode }) {
           </Box>
         );
       })}
+
+      <Dialog open={savedPreviewOpen} onClose={handleCloseSavedPreview} maxWidth="lg" fullWidth>
+        <DialogTitle>Saved API - Preview SQL</DialogTitle>
+        <DialogContent>
+          {savedPreviewError && <Typography color="error">{savedPreviewError}</Typography>}
+          {savedPreview && (
+            <Box>
+              {savedPreview.summary && <Typography sx={{ mb: 1 }} color="text.secondary">{savedPreview.summary}</Typography>}
+              <Collapse in={showRawSql}>
+                <Typography variant="subtitle2">SQL</Typography>
+                <Box component="pre" sx={{ p: 1, bgcolor: theme.palette.background.paper, color: theme.palette.text.primary, overflow: 'auto' }}>{savedPreview.sql}</Box>
+                {savedPreview.params && savedPreview.params.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="subtitle2">Parameters</Typography>
+                    <Box component="pre" sx={{ p: 1, bgcolor: theme.palette.background.paper, color: theme.palette.text.primary, overflow: 'auto' }}>{JSON.stringify(savedPreview.params, null, 2)}</Box>
+                  </Box>
+                )}
+                <Divider sx={{ my: 1 }} />
+              </Collapse>
+              <Typography variant="subtitle2">Sample Rows</Typography>
+              <Box component="pre" sx={{ p: 1, overflow: 'auto' }}>{JSON.stringify(savedPreview.rows || [], null, 2)}</Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowRawSql((s) => !s)}>{showRawSql ? 'Hide' : 'Show raw SQL'}</Button>
+          <Button onClick={handleCloseSavedPreview}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Endpoint Details Sidebar */}
       <Drawer

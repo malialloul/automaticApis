@@ -1,4 +1,5 @@
-import { Container, Grid, Drawer, CircularProgress } from '@mui/material';
+import { Container, Grid, Drawer, CircularProgress, Button, Box } from '@mui/material';
+import Builder from './Builder/Builder';
 import EndpointExplorer from './EndpointExplorer';
 import APITester from './APIsTester/APITester';
 
@@ -28,14 +29,26 @@ const APIs = () => {
   const handleCloseTryIt = () => setTryItOpen(false);
   const handleCloseCode = () => setCodeOpen(false);
  
+  const [builderOpen, setBuilderOpen] = useState(false);
+
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       {operatorsLoading && <CircularProgress />}
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Button variant="contained" size="small" onClick={() => setBuilderOpen(true)}>Open API Builder</Button>
+      </Box>
+
       <EndpointExplorer
         connectionId={connection?.id}
         onTryIt={handleTryIt}
         onGetCode={handleGetCode}
       />
+
+      <Drawer anchor="right" open={builderOpen} onClose={() => setBuilderOpen(false)} PaperProps={{ sx: { width: 1000 } }}>
+        {builderOpen && (
+          <Builder onClose={() => setBuilderOpen(false)} />
+        )}
+      </Drawer>
 
       {/* Try It Panel */}
       <Drawer anchor="right" open={tryItOpen} onClose={handleCloseTryIt} PaperProps={{ sx: { width: 600 } }}>
