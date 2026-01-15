@@ -453,24 +453,19 @@ const APITester = ({
 
   return (
     <Paper elevation={3} sx={{ p: 3 }}>
-      <Typography variant="h5" gutterBottom>
-        API Testing Playground
-      </Typography>
-
-      <Typography
-        variant="body2"
-        display={"flex"}
-        gap={1}
-        alignItems={"center"}
-        sx={{ fontFamily: "monospace", flex: 1 }}
-      >
-        <Chip
-          label={operation}
-          size="small"
-          color={getMethodColor(operation)}
-        />{" "}
-        {endpoint?.path || `/${connectionId}/${selectedTable}`}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+        <Typography variant="h6">API Tester</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
+          <Chip
+            label={operation}
+            size="small"
+            color={getMethodColor(operation)}
+          />
+          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+            {endpoint?.path || `/${connectionId}/${selectedTable}`}
+          </Typography>
+        </Box>
+      </Box>
 
       {(operation === "POST" || operation === "PUT") && (
         <Grid container spacing={2} sx={{ mt: 1 }}>

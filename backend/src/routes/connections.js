@@ -366,8 +366,12 @@ router.post('/:id/preview', async (req, res) => {
     // Basic validation
     if (!graph || !graph.source || !graph.source.table) return res.status(400).json({ error: 'Missing graph.source', sql: '' });
 
+    // Get dialect from connection info
+    const connInfo = connectionManager.getInfo(connectionId);
+    const dialect = connInfo?.type || 'postgres';
+
     const sourceTable = graph.source.table;
-    const qb = new QueryBuilder(sourceTable, schema[sourceTable] || { columns: [], primaryKeys: [] }, 'postgres');
+    const qb = new QueryBuilder(sourceTable, schema[sourceTable] || { columns: [], primaryKeys: [] }, dialect);
 
     // Build alias map
     const aliasMap = {};
@@ -440,13 +444,55 @@ router.post('/:id/preview', async (req, res) => {
       return s;
     }
 
+    // Helper to check if a table is in the query (source or joined)
+    function isTableInQuery(t) {
+      if (t === sourceTable) return true;
+      return (graph.joins || []).some(j => {
+        const ft = (j.from && j.from.table) ? j.from.table : (j.fromTable || j.from);
+        const tt = (j.to && j.to.table) ? j.to.table : (j.toTable || j.to);
+        return ft === t || tt === t;
+      });
+    }
+
+    // Aggregations (map then filter to only tables in query). Supports aggregations specified
+    // as { field: 'table.column' } as well as { table: 'table', field: 'column' }.
+    // Build aggregations list, normalizing { field: 'table.col' } forms and ensuring
+    // aggregation aliases do not collide with table aliases (e.g., user-provided "u").
+    const aggs = (graph.aggregations || []).map(a => {
+      const tableField = String(a.field || a.fieldName || '').split('.');
+      let tbl = a.table;
+      let fld = a.field;
+      if (tableField.length === 2) { tbl = tableField[0]; fld = tableField[1]; }
+      
+      // If tbl is an alias (not a real table), resolve it to the actual table name
+      const actualTable = Object.keys(aliasMap).find(k => aliasMap[k] === tbl) || tbl;
+      
+      let alias = a.as || a.alias || `${(a.type || a.func || 'agg').toLowerCase()}_${fld}`;
+      // avoid alias colliding with table alias
+      if (alias === getAlias(actualTable)) alias = `${alias}_agg`;
+      return { type: a.type || a.func, table: actualTable, field: fld, as: alias, fieldAlias: tbl };
+    }).filter(a => isTableInQuery(a.table));
+
     // Determine select list and build a human-friendly summary for the UI.
     const selects = [];
     const summaryParts = [];
-    if (graph.fields && Array.isArray(graph.fields) && graph.fields.length > 0) {
+    
+    // Check if we should skip individual fields (aggregations without groupBy)
+    const hasAggs = (graph.aggregations || []).length > 0;
+    const hasGroupBy = graph.groupBy && graph.groupBy.length > 0;
+    const skipIndividualFields = hasAggs && !hasGroupBy;
+    
+    if (graph.fields && Array.isArray(graph.fields) && graph.fields.length > 0 && !skipIndividualFields) {
       // Use explicit graph.fields and alias columns to avoid collisions (table_column)
       graph.fields.forEach((f) => {
         const s = String(f);
+        
+        // Check if this field is an aggregation alias (skip it, will be added separately)
+        const isAggAlias = aggs.some(a => a.as === s);
+        if (isAggAlias) {
+          return; // Skip aggregation aliases; they'll be handled separately
+        }
+        
         if (s.includes('.')) {
           const [left, ...rest] = s.split('.');
           const right = rest.join('.');
@@ -486,6 +532,12 @@ router.post('/:id/preview', async (req, res) => {
         });
         if (!isSource && !isJoined) continue; // Skip tables not in the query
 
+        // If aggregations exist but no groupBy, skip selecting individual fields
+        if (skipIndividualFields) {
+          summaryParts.push(`${t}: no fields (aggregation without GROUP BY)`);
+          continue;
+        }
+
         if (!fs || fs.length === 0) {
           // empty selection for a table
           if (!Boolean(graph.outputFields && Object.keys(graph.outputFields).length > 0)) {
@@ -508,36 +560,14 @@ router.post('/:id/preview', async (req, res) => {
         }
       }
     } else {
-      selects.push(`${getAlias(sourceTable)}.*`);
-      summaryParts.push(`${sourceTable}: all fields`);
+      // If aggregations exist but no groupBy, skip selecting all fields
+      if (skipIndividualFields) {
+        summaryParts.push(`${sourceTable}: no fields (aggregation without GROUP BY)`);
+      } else {
+        selects.push(`${getAlias(sourceTable)}.*`);
+        summaryParts.push(`${sourceTable}: all fields`);
+      }
     }
-
-    // Helper to check if a table is in the query (source or joined)
-    function isTableInQuery(t) {
-      if (t === sourceTable) return true;
-      return (graph.joins || []).some(j => {
-        const ft = (j.from && j.from.table) ? j.from.table : (j.fromTable || j.from);
-        const tt = (j.to && j.to.table) ? j.to.table : (j.toTable || j.to);
-        return ft === t || tt === t;
-      });
-    }
-
-    // Aggregations (map then filter to only tables in query). Supports aggregations specified
-    // as { field: 'table.column' } as well as { table: 'table', field: 'column' }.
-    // Build aggregations list, normalizing { field: 'table.col' } forms and ensuring
-    // aggregation aliases do not collide with table aliases (e.g., user-provided "u").
-    const aggs = (graph.aggregations || []).map(a => {
-      const tableField = String(a.field || a.fieldName || '').split('.');
-      let tbl = a.table;
-      let fld = a.field;
-      if (tableField.length === 2) { tbl = tableField[0]; fld = tableField[1]; }
-      let alias = a.as || a.alias || `${(a.type || a.func || 'agg').toLowerCase()}_${fld}`;
-      // avoid alias colliding with table alias
-      if (alias === getAlias(tbl)) alias = `${alias}_agg`;
-      return { type: a.type || a.func, table: tbl, field: fld, as: alias };
-    }).filter(a => isTableInQuery(a.table));
-
-
 
     // Build FROM and JOINs
     const joinedTables = new Set([sourceTable]);
@@ -618,7 +648,7 @@ router.post('/:id/preview', async (req, res) => {
     // Add aggregations for joined tables
     aggs.forEach(a => {
       if (joinedTables.has(a.table)) {
-        finalSelects.push(`${a.type}(${getAlias(a.table)}.${a.field}) AS ${qb.sanitizeIdentifier(a.as)}`);
+        finalSelects.push(`${a.type}(${qb.sanitizeIdentifier(getAlias(a.table))}.${qb.sanitizeIdentifier(a.field)}) AS ${qb.sanitizeIdentifier(a.as)}`);
       }
     });
 
@@ -626,8 +656,8 @@ router.post('/:id/preview', async (req, res) => {
     // for the final select list (filtered to tables actually in the query).
     if (selects.length > 0) {
       const filteredSelects = selects.filter(s => {
-        // match alias at start, allow optional quotes: "alias".col or alias.col
-        const m = String(s).match(/^\s*"?([A-Za-z0-9_]+)"?\./);
+        // match alias at start, allow optional quotes: "alias".col or `alias`.col or alias.col
+        const m = String(s).match(/^\s*[`"]?([A-Za-z0-9_]+)[`"]?\./);
         if (!m) return true; // keep expressions without clear alias
         const alias = m[1];
         const tableName = Object.keys(aliasMap).find(k => aliasMap[k] === alias);
@@ -650,7 +680,8 @@ router.post('/:id/preview', async (req, res) => {
     for (const s of finalSelects) {
       const ss = String(s).trim();
       // If it already contains an explicit alias (AS foo), keep it and record the alias
-      const asMatch = ss.match(/\s+AS\s+"?([A-Za-z0-9_]+)"?$/i);
+      // Support both PostgreSQL double quotes and MySQL backticks
+      const asMatch = ss.match(/\s+AS\s+[`"]?([A-Za-z0-9_]+)[`"]?$/i);
       if (asMatch) {
         transformedSelects.push(ss);
         selectColumnNames.push(asMatch[1]);
@@ -658,15 +689,40 @@ router.post('/:id/preview', async (req, res) => {
       }
 
       // alias.* expansion (turn into individual aliased columns)
-      const starMatch = ss.match(/^\s*"?([A-Za-z0-9_]+)"?\s*\.\s*\*\s*$/);
+      // Support both PostgreSQL double quotes and MySQL backticks
+      const starMatch = ss.match(/^\s*[`"]?([A-Za-z0-9_]+)[`"]?\s*\.\s*\*\s*$/);
       if (starMatch) {
         const alias = starMatch[1];
         const tableName = Object.keys(aliasMap).find(k => aliasMap[k] === alias) || alias;
         const cols = (schema && schema[tableName] && Array.isArray(schema[tableName].columns)) ? schema[tableName].columns.map(c => c.name) : [];
         if (cols.length > 0) {
+          // If there's a GROUP BY, check if this table's columns are covered
+          const groupByFields = (graph.groupBy || []).map(g => String(g));
+          const hasGroupBy = groupByFields.length > 0;
+          
           cols.forEach(col => {
             const aliasName = `${tableName}_${col}`;
             if (selectColumnNames.includes(aliasName)) return; // already present; skip
+            
+            // If GROUP BY exists, only include columns that are in GROUP BY or skip non-source tables
+            if (hasGroupBy) {
+              const isInGroupBy = groupByFields.some(g => {
+                const parts = g.split('.');
+                if (parts.length === 2) {
+                  const gTable = parts[0];
+                  const gField = parts[1];
+                  // Check if table matches (by name or alias)
+                  return (gTable === tableName || gTable === alias) && gField === col;
+                }
+                return g === col;
+              });
+              
+              // Skip columns not in GROUP BY for non-source tables (to avoid MySQL only_full_group_by error)
+              if (!isInGroupBy && tableName !== sourceTable) {
+                return; // skip this column
+              }
+            }
+            
             transformedSelects.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(col)} AS ${qb.sanitizeIdentifier(aliasName)}`);
             selectColumnNames.push(aliasName);
           });
@@ -675,7 +731,8 @@ router.post('/:id/preview', async (req, res) => {
       }
 
       // alias.col -> alias with table_column naming; skip if already present
-      const colMatch = ss.match(/^\s*"?([A-Za-z0-9_]+)"?\s*\.\s*"?([A-Za-z0-9_]+)"?\s*$/);
+      // Support both PostgreSQL double quotes and MySQL backticks
+      const colMatch = ss.match(/^\s*[`"]?([A-Za-z0-9_]+)[`"]?\s*\.\s*[`"]?([A-Za-z0-9_]+)[`"]?\s*$/);
       if (colMatch) {
         const alias = colMatch[1];
         const col = colMatch[2];
@@ -714,10 +771,13 @@ router.post('/:id/preview', async (req, res) => {
     const whereClauses = [];
     const params = [];
     (graph.filters || []).forEach((f) => {
-      const table = f.table || f.source || (f.field || '').split('.')[0];
-      if (!isTableInQuery(table)) return; // Skip filters on tables not in query
+      let table = f.table || f.source || (f.field || '').split('.')[0];
+      // If table is an alias, resolve it to actual table name
+      const resolvedTable = Object.keys(aliasMap).find(k => aliasMap[k] === table) || table;
+      
+      if (!isTableInQuery(resolvedTable)) return; // Skip filters on tables not in query
       const field = f.field && f.field.includes('.') ? f.field.split('.')[1] : f.field;
-      const alias = getAlias(table || sourceTable);
+      const alias = getAlias(resolvedTable || sourceTable);
       const op = (f.op || '=').toLowerCase();
       const sqlOp = {
         'eq': '=',
@@ -811,57 +871,36 @@ router.post('/:id/preview', async (req, res) => {
 
     if (whereClauses.length) sql += ` WHERE ${whereClauses.join(' AND ')}`;
 
-    // If aggregations are present and the user did not provide an explicit GROUP BY,
-    // automatically GROUP BY all non-aggregated selected columns to produce valid SQL.
-    if ((aggs || []).length > 0 && (!graph.groupBy || graph.groupBy.length === 0)) {
-      const groupByExprs = [];
-      for (const s of finalSelects) {
-        const ss = String(s).trim();
-        // Skip aggregation-like entries
-        if (/^[A-Z]+\s*\(/i.test(ss)) continue;
-
-        // alias.* -> expand columns
-        const starMatch = ss.match(/^\s*"?([A-Za-z0-9_]+)"?\s*\.\s*\*\s*$/);
-        if (starMatch) {
-          const alias = starMatch[1];
-          const tableName = Object.keys(aliasMap).find(k => aliasMap[k] === alias) || alias;
-          const cols = (schema && schema[tableName] && Array.isArray(schema[tableName].columns)) ? schema[tableName].columns.map(c => c.name) : [];
-          cols.forEach(col => groupByExprs.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(col)}`));
-          continue;
-        }
-
-        // alias.col or alias.col AS alias
-        const colMatch = ss.match(/^\s*"?([A-Za-z0-9_]+)"?\s*\.\s*"?([A-Za-z0-9_]+)"?/);
-        if (colMatch) {
-          const alias = colMatch[1];
-          const col = colMatch[2];
-          groupByExprs.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(col)}`);
-          continue;
-        }
-
-        // fallback: include the raw expression
-        groupByExprs.push(ss);
-      }
-      const uniq = Array.from(new Set(groupByExprs));
-      if (uniq.length > 0) sql += ` GROUP BY ${uniq.join(', ')}`;
-    }
+    // Note: If user doesn't provide explicit groupBy, don't auto-add GROUP BY
+    // This allows aggregations without grouping to return single aggregate result
 
     // GROUP BY (filter to only tables in query) - user provided groupBy takes precedence and will be appended
     if (graph.groupBy && graph.groupBy.length > 0) {
       const validGroupBy = graph.groupBy.filter(g => {
         if (String(g).includes('.')) {
           const [tbl, fld] = String(g).split('.');
-          return isTableInQuery(tbl);
+          // If tbl is an alias, resolve it to actual table name
+          const resolvedTbl = Object.keys(aliasMap).find(k => aliasMap[k] === tbl) || tbl;
+          return isTableInQuery(resolvedTbl);
         }
         // If no table, assume source
         return true;
+      }).map(g => {
+        // Also normalize the groupBy to use actual table names instead of aliases
+        if (String(g).includes('.')) {
+          const [tbl, fld] = String(g).split('.');
+          const resolvedTbl = Object.keys(aliasMap).find(k => aliasMap[k] === tbl) || tbl;
+          return `${resolvedTbl}.${fld}`;
+        }
+        return g;
       });
+      
       if (validGroupBy.length > 0) {
         // Ensure all selected non-aggregated columns are in GROUP BY
         for (const sel of finalSelects) {
           if (sel.includes('(')) continue; // skip aggregations
-          // extract table.field from "alias"."field" AS "table_field"
-          const match = sel.match(/^\s*"([^"]+)"\."([^"]+)"\s+AS\s+"([^"]+)"$/);
+          // extract table.field from "alias"."field" AS "table_field" or `alias`.`field` AS `table_field`
+          const match = sel.match(/^\s*[`"]([^`"]+)[`"]\.[`"]([^`"]+)[`"]\s+AS\s+[`"]([^`"]+)[`"]$/);
           if (match) {
             const alias = match[1];
             const field = match[2];
@@ -919,7 +958,11 @@ router.post('/:id/preview', async (req, res) => {
         let left;
         try {
           if (aggMatch) {
-            left = qb.sanitizeIdentifier(aggMatch.as);
+            // Build the actual aggregate function instead of using the alias
+            // PostgreSQL doesn't allow aliases in HAVING, need the real function
+            const aggAlias = qb.sanitizeIdentifier(getAlias(aggMatch.table));
+            const aggField = qb.sanitizeIdentifier(aggMatch.field);
+            left = `${aggMatch.type}(${aggAlias}.${aggField})`;
           } else if (String(rawAgg).includes('.')) {
             const parts = String(rawAgg).split('.');
             if (parts.length === 2) {
@@ -948,8 +991,15 @@ router.post('/:id/preview', async (req, res) => {
 
     // Run query
     try {
-      const result = await connectionManager.getConnection(connectionId).then(pool => pool.query(sql, qb.params));
-      const rows = result.rows ?? result[0] ?? [];
+      const pool = await connectionManager.getConnection(connectionId);
+      let rows;
+      if (dialect === 'mysql') {
+        const [mysqlRows] = await pool.query(sql, qb.params);
+        rows = mysqlRows;
+      } else {
+        const result = await pool.query(sql, qb.params);
+        rows = result.rows ?? result[0] ?? [];
+      }
       const columns = rows[0] ? Object.keys(rows[0]) : (typeof selectColumnNames !== 'undefined' && selectColumnNames.length > 0 ? selectColumnNames : selects.map(s => s));
       const friendlySummary = summaryParts.join(' ; ');
       // Return SQL for debugging/preview (safe to show to authorized users in this app)

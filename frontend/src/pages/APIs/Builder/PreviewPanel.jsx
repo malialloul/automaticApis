@@ -3,7 +3,7 @@ import { Box, Typography, Table, TableHead, TableRow, TableCell, TableBody, Circ
 import { listRecords, previewGraph } from '../../../services/api';
 
 // Naive preview that supports simple FK joins where primaryTable has a FK to a secondary table.
-const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [], filters = [], groupBy = [], aggregates = [], having = [], openFilterFor, filterDraft, openAggFor, aggDraft, openGroupFor, groupDraft, openHavingFor, havingDraft }) => {
+const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [], filters = [], groupBy = [], aggregates = [], having = [], openFilterFor, filterDraft, openAggFor, aggDraft, openGroupFor, groupDraft, openHavingFor, havingDraft, hasValidationErrors = false }) => {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [cols, setCols] = useState([]);
@@ -13,6 +13,14 @@ const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [
   useEffect(() => {
     let mounted = true;
     async function fetchPreview() {
+      // Skip preview if there are validation errors
+      if (hasValidationErrors) {
+        setRows([]);
+        setCols([]);
+        setError(null);
+        return;
+      }
+
       if (!connectionId || !primaryTable) {
         setRows([]);
         setCols([]);
@@ -256,7 +264,7 @@ const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [
 
     fetchPreview();
     return () => { mounted = false; };
-  }, [connectionId, primaryTable, JSON.stringify(outputFields), JSON.stringify(joins), JSON.stringify(filters), JSON.stringify(groupBy), JSON.stringify(aggregates), JSON.stringify(having), openFilterFor, JSON.stringify(filterDraft), openAggFor, JSON.stringify(aggDraft), openGroupFor, JSON.stringify(groupDraft), openHavingFor, JSON.stringify(havingDraft)]);
+  }, [connectionId, primaryTable, JSON.stringify(outputFields), JSON.stringify(joins), JSON.stringify(filters), JSON.stringify(groupBy), JSON.stringify(aggregates), JSON.stringify(having), openFilterFor, JSON.stringify(filterDraft), openAggFor, JSON.stringify(aggDraft), openGroupFor, JSON.stringify(groupDraft), openHavingFor, JSON.stringify(havingDraft), hasValidationErrors]);
 
   if (!primaryTable) {
     return <Typography color="text.secondary">No table selected. Add a table to the canvas to see a preview.</Typography>;
@@ -268,27 +276,41 @@ const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [
   const displayCols = cols && cols.length > 0 ? cols : (rows[0] ? Object.keys(rows[0]) : []);
 
   return (
-    <Box>
-      <Typography variant="subtitle1">Live Preview</Typography>
-      <Typography variant="caption" color="text.secondary">Showing up to 5 example rows from <b>{primaryTable}</b>. Joins are merged where possible.</Typography>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            {displayCols.map((c) => (
-              <TableCell key={c}>{c}</TableCell>
-            ))}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map((r, i) => (
-            <TableRow key={i}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Box sx={{ mb: 1 }}>
+        <Typography variant="subtitle1">Live Preview</Typography>
+        <Typography variant="caption" color="text.secondary">
+          Showing up to 5 rows from <b>{primaryTable}</b>
+        </Typography>
+      </Box>
+      <Box sx={{ flex: 1, overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+        <Table size="small" stickyHeader sx={{ '& th': { bgcolor: 'background.paper', fontWeight: 'bold', fontSize: '0.8rem' }, '& td': { fontSize: '0.8rem', py: 0.75 } }}>
+          <TableHead>
+            <TableRow>
               {displayCols.map((c) => (
-                <TableCell key={c}>{String(r[c] ?? '')}</TableCell>
+                <TableCell key={c}>{c.split('.').pop()}</TableCell>
               ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHead>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={displayCols.length || 1}>
+                  <Typography variant="body2" color="text.secondary">No data to display</Typography>
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((r, i) => (
+                <TableRow key={i} hover>
+                  {displayCols.map((c) => (
+                    <TableCell key={c}>{String(r[c] ?? '')}</TableCell>
+                  ))}
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Box>
     </Box>
   );
 };
