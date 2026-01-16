@@ -547,12 +547,13 @@ export const RelationshipGraph = () => {
           </Box>
         </Box>
 
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} alignItems="center" data-tour="er-toolbar">
           {/* Drawing Mode Toggle */}
           <Tooltip title={drawingMode ? 'Exit drawing mode' : 'Enter drawing mode'}>
             <IconButton 
               onClick={() => setDrawingMode(!drawingMode)}
               size="small"
+              data-tour="er-drawing"
               sx={{ 
                 bgcolor: drawingMode 
                   ? (theme) => alpha(theme.palette.warning.main, 0.2)
@@ -814,6 +815,7 @@ export const RelationshipGraph = () => {
       <Paper
         ref={containerRef}
         variant="outlined"
+        data-tour="er-canvas"
         sx={(t) => ({
           flex: 1,
           borderRadius: 3,

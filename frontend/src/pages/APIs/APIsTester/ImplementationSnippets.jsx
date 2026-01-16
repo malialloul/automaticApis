@@ -82,7 +82,7 @@ const ImplementationSnippets = ({ endpoint }) => {
   const codeBg = theme.palette.mode === 'dark' ? 'grey.900' : '#f7fafc';
 
   return (
-    <Paper elevation={3} sx={{ p: 3, bgcolor: theme.palette.background.paper }}>
+    <Paper elevation={3} sx={{ p: 3, bgcolor: theme.palette.background.paper }} data-tour="code-snippets">
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">Implementation Code Snippets</Typography>
       </Box>

@@ -51,8 +51,8 @@ export default function TablesList({ setDataTable, filteredTables, openAddDialog
     }
     
     return (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-            {filteredTables.map(([tableName, tableInfo]) => (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }} data-tour="schema-tables">
+            {filteredTables.map(([tableName, tableInfo], index) => (
                 <Accordion 
                     key={tableName} 
                     sx={{ 
@@ -143,7 +143,7 @@ export default function TablesList({ setDataTable, filteredTables, openAddDialog
                                     )}
                                 </Box>
                             </Box>
-                            <Box sx={{ display: "flex", gap: 1 }}>
+                            <Box sx={{ display: "flex", gap: 1 }} data-tour={index === 0 ? "schema-table-actions" : undefined}>
                                 <Tooltip title="Add row">
                                     <IconButton
                                         size="small"

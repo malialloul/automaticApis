@@ -64,7 +64,7 @@ export const KeyMetrics = ({ displayStats, loadingStats }) => {
     ];
 
     return (
-        <Grid container spacing={2}>
+        <Grid container spacing={2} data-tour="dashboard-metrics">
             {metrics.map((metric, idx) => (
                 <Grid item xs={6} sm={6} md={3} key={idx}>
                     <MetricCard 

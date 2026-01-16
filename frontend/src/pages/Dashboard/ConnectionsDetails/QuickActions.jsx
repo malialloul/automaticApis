@@ -24,7 +24,7 @@ export const QuickActions = () => {
             label: "View APIs",
             description: "Browse & test endpoints",
             color: "#8B5CF6",
-            onClick: () => currentConnection && navigate("/apis"),
+            onClick: () => currentConnection && navigate("/db-apis"),
             disabled: !currentConnection,
         },
         {
@@ -55,6 +55,7 @@ export const QuickActions = () => {
                 display: "flex",
                 flexDirection: "column",
             }}
+            data-tour="quick-actions"
         >
             {/* Header */}
             <Box sx={{ 

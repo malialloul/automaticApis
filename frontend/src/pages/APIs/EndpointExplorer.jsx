@@ -208,7 +208,7 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
         </Stack>
 
         {/* Saved APIs */}
-        <Box>
+        <Box data-tour="api-saved">
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5 }}>
             <BookmarkIcon sx={{ fontSize: 18, color: "primary.main" }} />
             <Typography variant="subtitle2" fontWeight={600}>Saved APIs</Typography>
@@ -309,7 +309,7 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
         {filteredTables.length} table{filteredTables.length !== 1 ? "s" : ""} with endpoints
       </Typography>
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }} data-tour="api-list">
         {filteredTables.map(([tableName, tableInfo]) => {
           let endpoints = [];
           if (remoteEndpoints) {

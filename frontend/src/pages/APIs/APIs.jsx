@@ -90,6 +90,7 @@ const APIs = () => {
             variant="contained" 
             startIcon={<BuildIcon />}
             onClick={() => setBuilderOpen(true)}
+            data-tour="api-builder-btn"
             sx={{
               borderRadius: 2,
               textTransform: 'none',

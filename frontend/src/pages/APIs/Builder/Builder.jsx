@@ -440,12 +440,12 @@ const Builder = ({ onClose }) => {
 
         <Grid container spacing={2.5}>
           <Grid item xs={12} md={3} sx={{ minWidth: 220 }}>
-            <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+            <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }} data-tour="builder-schema">
               <SchemaSidebar schema={schema} onAddTable={addTable} />
             </Paper>
           </Grid>
           <Grid item xs={12} md={9}>
-            <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+            <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }} data-tour="builder-canvas">
               <Canvas
               tables={tables}
               schema={schema}
@@ -503,6 +503,7 @@ const Builder = ({ onClose }) => {
           overflow: 'hidden',
           flexShrink: 0,
         }}
+        data-tour="builder-preview"
       >
         <Box 
           sx={{ 

@@ -57,6 +57,7 @@ export const DatabaseBreakdown = ({ refreshSchemas, connections, scope, statsByI
                 display: "flex",
                 flexDirection: "column",
             }}
+            data-tour="database-breakdown"
         >
             {/* Header */}
             <Box sx={{ 

@@ -59,6 +59,7 @@ export const Sidebar = () => {
     };
 
     return <Box
+        data-tour="sidebar"
         sx={{
             width: 260,
             flexShrink: 0,
@@ -96,6 +97,7 @@ export const Sidebar = () => {
                 size="small"
                 startIcon={<AddIcon />}
                 onClick={() => setOpenDialog(true)}
+                data-tour="new-connection-btn"
                 sx={{
                     background: "linear-gradient(135deg, #8B5CF6 0%, #3B82F6 100%)",
                     boxShadow: "0 2px 8px rgba(139, 92, 246, 0.3)",

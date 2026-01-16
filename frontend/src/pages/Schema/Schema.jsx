@@ -367,6 +367,7 @@ const Schema = () => {
             InputProps={{
               sx: { borderRadius: 2 },
             }}
+            data-tour="schema-search"
           />
           <Button
             variant="contained"

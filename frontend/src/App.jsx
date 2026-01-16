@@ -16,6 +16,7 @@ import Navigation from "./layout/Navigation";
 import ConsoleLayout from "./layout/ConsoleLayout/ConsoleLayout";
 import { PortalRoutes, PortalRoutesPaths } from "./routes/portal.routes";
 import { useLoadSchema } from "./_shared/database/useLoadSchema";
+import { TourProvider } from "./_shared/tour/TourProvider";
 
 export const AppContext = React.createContext({ schema: null, refreshSchema: null, isLoadingSchema: false, schemaError: null });
 
@@ -29,18 +30,20 @@ function AppContent() {
   return (
     <ThemeProvider theme={appTheme}>
       <CssBaseline />
-      {!isConsoleRoute && (
-        <Navigation darkMode={darkMode} setDarkMode={setDarkMode} />
-      )}
-      {isConsoleRoute ? (
-        <ConsoleLayout darkMode={darkMode} setDarkMode={setDarkMode}>
-          <PortalRoutes />
-        </ConsoleLayout>
-      ) : (
-        <Routes>
-          <Route path="/" element={<Home />} />
-        </Routes>
-      )}
+      <TourProvider>
+        {!isConsoleRoute && (
+          <Navigation darkMode={darkMode} setDarkMode={setDarkMode} />
+        )}
+        {isConsoleRoute ? (
+          <ConsoleLayout darkMode={darkMode} setDarkMode={setDarkMode}>
+            <PortalRoutes />
+          </ConsoleLayout>
+        ) : (
+          <Routes>
+            <Route path="/" element={<Home />} />
+          </Routes>
+        )}
+      </TourProvider>
     </ThemeProvider>
   );
 }
