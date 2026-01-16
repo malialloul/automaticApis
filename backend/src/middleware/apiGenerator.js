@@ -6,7 +6,7 @@ class APIGenerator {
     this.connectionId = connectionId;
     this.pool = pool;
     this.schema = schema;
-    this.dialect = dialect;
+    this.dialect = (dialect || 'postgres').toLowerCase();
     this.router = express.Router();
 
     // Collections for generated metadata (used by UI and executor)
@@ -289,7 +289,23 @@ class APIGenerator {
       try {
         const qb = new QueryBuilder(tableName, tableSchema, this.dialect);
 
-        // Build WHERE clause from req.query and/or req.body.where
+        // Determine data to update FIRST (so SET params come before WHERE params)
+        const data = req.body && Object.keys(req.body).length ? (req.body.data || req.body) : null;
+        if (!data || Object.keys(data).length === 0) {
+          throw new Error('No update data provided');
+        }
+
+        const setClauses = [];
+        for (const [k, v] of Object.entries(data)) {
+          if (!qb.isValidColumn(k)) continue;
+          setClauses.push(`${qb.sanitizeIdentifier(k)} = ${qb.addParam(v)}`);
+        }
+
+        if (setClauses.length === 0) {
+          throw new Error('No valid columns to update');
+        }
+
+        // Build WHERE clause from req.query and/or req.body.where AFTER SET clauses
         const whereClauses = [];
 
         // 1) From query params (supports column__gt, column__like, column__contains, column__startswith, etc.)
@@ -355,25 +371,17 @@ class APIGenerator {
           throw new Error('No valid filters provided for update');
         }
 
-        // Determine data to update
-        const data = req.body && Object.keys(req.body).length ? (req.body.data || req.body) : null;
-        if (!data || Object.keys(data).length === 0) {
-          throw new Error('No update data provided');
+        let qtext = `UPDATE ${qb.sanitizeIdentifier(tableName)} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`;
+        if (this.dialect === 'postgres') {
+          qtext += ' RETURNING *';
         }
-
-        const setClauses = [];
-        for (const [k, v] of Object.entries(data)) {
-          if (!qb.isValidColumn(k)) continue;
-          setClauses.push(`${qb.sanitizeIdentifier(k)} = ${qb.addParam(v)}`);
-        }
-
-        if (setClauses.length === 0) {
-          throw new Error('No valid columns to update');
-        }
-
-        const qtext = `UPDATE ${qb.sanitizeIdentifier(tableName)} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')} RETURNING *`;
         const result = await this.pool.query(qtext, qb.params);
         const rows = result.rows ?? result[0];
+        
+        // For MySQL, rows will be affected count info, not actual data
+        if (this.dialect === 'mysql') {
+          return res.json({ updated: result.affectedRows ?? 0, data: [] });
+        }
         return res.json({ updated: rows?.length ?? 0, data: rows });
 
       } catch (error) {
@@ -445,7 +453,27 @@ class APIGenerator {
       }
     });
 
-    // (Removed per-id update route) single-item update routes are intentionally not registered; use collection-level PUT with body { data, where } instead.
+    // Update by id
+    this.router.put(`${basePath}/:id`, async (req, res) => {
+      try {
+        const qb = new QueryBuilder(tableName, tableSchema, this.dialect);
+        const updateQ = qb.buildUpdate(req.params.id, req.body);
+        await this.pool.query(updateQ.text, updateQ.values);
+
+        // Fetch the updated record
+        const qb2 = new QueryBuilder(tableName, tableSchema, this.dialect);
+        const selectQ = qb2.buildSelectById(req.params.id);
+        const result = await this.pool.query(selectQ.text, selectQ.values);
+        const rows = result.rows ?? result[0];
+        if (!rows || rows.length === 0) {
+          return res.status(404).json({ error: 'Record not found' });
+        }
+        res.json(rows[0]);
+      } catch (error) {
+        console.error(`Error updating ${tableName}:`, error);
+        res.status(500).json({ error: error.message });
+      }
+    });
 
     // (Removed per-id delete route) single-item delete routes are intentionally not registered; use collection-level DELETE with filters instead.
 

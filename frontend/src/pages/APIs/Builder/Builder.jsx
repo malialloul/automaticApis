@@ -92,19 +92,25 @@ const Builder = ({ onClose }) => {
   // detect simple join suggestions based on foreign keys present in schema
   const detectJoinSuggestions = () => {
     const suggestions = [];
+    const seen = new Set(); // Track unique suggestions to avoid duplicates
     if (!schema) return suggestions;
+    
     for (const t of tables) {
       const fks = schema[t]?.foreignKeys || [];
       for (const fk of fks) {
         const other = fk.foreignTable;
         if (tables.includes(other)) {
-          suggestions.push({
-            fromTable: t,
-            toTable: other,
-            fromColumn: fk.columnName,
-            toColumn: fk.foreignColumn || fk.foreign_column || 'id',
-            label: `${t}.${fk.columnName} → ${other}.${fk.foreignColumn || fk.foreign_column || 'id'}`,
-          });
+          const key = `${t}.${fk.columnName}->${other}.${fk.foreignColumn || fk.foreign_column || 'id'}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            suggestions.push({
+              fromTable: t,
+              toTable: other,
+              fromColumn: fk.columnName,
+              toColumn: fk.foreignColumn || fk.foreign_column || 'id',
+              label: `${t}.${fk.columnName} → ${other}.${fk.foreignColumn || fk.foreign_column || 'id'}`,
+            });
+          }
         }
       }
     }
@@ -115,13 +121,17 @@ const Builder = ({ onClose }) => {
         const fks = schema[other]?.foreignKeys || [];
         for (const fk of fks) {
           if (fk.foreignTable === t) {
-            suggestions.push({
-              fromTable: other,
-              toTable: t,
-              fromColumn: fk.columnName,
-              toColumn: fk.foreignColumn || fk.foreign_column || 'id',
-              label: `${other}.${fk.columnName} → ${t}.${fk.foreignColumn || fk.foreign_column || 'id'}`,
-            });
+            const key = `${other}.${fk.columnName}->${t}.${fk.foreignColumn || fk.foreign_column || 'id'}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              suggestions.push({
+                fromTable: other,
+                toTable: t,
+                fromColumn: fk.columnName,
+                toColumn: fk.foreignColumn || fk.foreign_column || 'id',
+                label: `${other}.${fk.columnName} → ${t}.${fk.foreignColumn || fk.foreign_column || 'id'}`,
+              });
+            }
           }
         }
       }

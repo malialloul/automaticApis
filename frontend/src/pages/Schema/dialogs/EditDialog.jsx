@@ -4,13 +4,10 @@ import {
     DialogContent, 
     DialogActions, 
     Box, 
-    Typography, 
     Button,
     IconButton,
-    Chip,
-    alpha,
-    useTheme,
     Alert,
+    Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
@@ -18,8 +15,6 @@ import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 
 export default function EditDialog({ open, onClose, tableColumns, renderInputField, editMode, editError, editLoading, handleEditSubmit }) {
-    const theme = useTheme();
-    
     if (!tableColumns) return null;
     
     return (
@@ -76,40 +71,12 @@ export default function EditDialog({ open, onClose, tableColumns, renderInputFie
             </Box>
 
             <DialogContent sx={{ p: 2.5 }}>
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     {tableColumns.map((col) => {
                         const input = renderInputField(col);
                         if (input === null) return null;
                         return (
                             <Box key={col.name}>
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
-                                    <Typography variant="body2" fontWeight={600}>
-                                        {col.name}
-                                    </Typography>
-                                    <Chip 
-                                        label={col.type} 
-                                        size="small" 
-                                        sx={{ 
-                                            height: 18, 
-                                            fontSize: 10,
-                                            fontFamily: "monospace",
-                                            bgcolor: alpha(theme.palette.info.main, 0.1),
-                                            color: "info.main",
-                                        }}
-                                    />
-                                    {!col.nullable && (
-                                        <Chip 
-                                            label="required" 
-                                            size="small" 
-                                            sx={{ 
-                                                height: 18, 
-                                                fontSize: 10,
-                                                bgcolor: alpha(theme.palette.error.main, 0.1),
-                                                color: "error.main",
-                                            }}
-                                        />
-                                    )}
-                                </Box>
                                 {input}
                             </Box>
                         );

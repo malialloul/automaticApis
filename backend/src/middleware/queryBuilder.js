@@ -6,9 +6,39 @@ class QueryBuilder {
   constructor(tableName, schema, dialect = 'postgres') {
     this.tableName = tableName;
     this.schema = schema;
-    this.dialect = dialect;
+    this.dialect = (dialect || 'postgres').toLowerCase();
     this.params = [];
     this.paramCounter = 1;
+  }
+
+  /**
+   * Convert ISO timestamp to MySQL format if needed
+   * @param {any} value - Parameter value
+   * @returns {any} Converted value
+   */
+  convertTimestampForDialect(value) {
+    if (this.dialect !== 'mysql') return value;
+    if (typeof value !== 'string') return value;
+    
+    // Check if it looks like an ISO timestamp (contains T and possibly Z or timezone)
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+      try {
+        const date = new Date(value);
+        if (!isNaN(date.getTime())) {
+          // Convert to MySQL format: YYYY-MM-DD HH:mm:ss
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          const seconds = String(date.getSeconds()).padStart(2, '0');
+          return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        }
+      } catch {
+        // Return original if conversion fails
+      }
+    }
+    return value;
   }
 
   /**
@@ -17,7 +47,9 @@ class QueryBuilder {
    * @returns {string} Placeholder like $1, $2, etc.
    */
   addParam(value) {
-    this.params.push(value);
+    // Convert ISO timestamps for MySQL
+    const convertedValue = this.convertTimestampForDialect(value);
+    this.params.push(convertedValue);
     if (this.dialect === 'mysql') {
       return '?';
     }

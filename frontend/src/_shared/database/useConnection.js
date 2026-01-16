@@ -7,7 +7,9 @@ export const useConnection = () => {
   const [schema, setSchema] = useState(null);
 
   useEffect(() => {
-    // Load last used connection from localStorage
+    // Load last used connection from localStorage on mount
+    // This restores the connection details (credentials) which persist across server restarts
+    // Note: The schema (separate from connection details) needs to be re-introspected after server restart
     const lastConnectionId = localStorage.getItem('lastConnectionId');
     if (lastConnectionId) {
       const conn = getConnection(lastConnectionId);
@@ -15,7 +17,8 @@ export const useConnection = () => {
         setCurrentConnection(conn);
       }
     }
-    // Listen for cross-component updates
+    
+    // Listen for cross-component updates (e.g., when another tab selects a connection)
     const onUpdate = () => {
       const id = localStorage.getItem('lastConnectionId');
       const conn = id ? getConnection(id) : null;

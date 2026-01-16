@@ -291,7 +291,8 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
                         setSavedPreviewOpen(true);
                         return;
                       }
-                      if (onTryIt) onTryIt({ table, method: ep.method || 'GET', path: ep.path || `/${ep.slug}`, endpoint: ep });
+                      // Pass the saved endpoint with its graph so APITester can execute the custom SQL
+                      if (onTryIt) onTryIt({ table, method: ep.method || 'GET', path: ep.path || `/${ep.slug}`, graph: ep.graph, ...ep });
                       else handleTryIt(ep);
                     }}
                   >

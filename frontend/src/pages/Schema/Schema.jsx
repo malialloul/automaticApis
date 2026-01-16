@@ -97,6 +97,10 @@ const Schema = () => {
   };
 
   const openEditDialog = async (row) => {
+    // If row is null, we're adding a new row; otherwise editing
+    if (!row) {
+      return openAddDialog(dataTable);
+    }
     setEditMode("edit");
     setEditRow(row);
     setEditValues({ ...row });
@@ -149,12 +153,16 @@ const Schema = () => {
         await createRecord(connectionId, dataTable, payload);
       } else if (editMode === "edit" && editRow) {
         const payload = { ...editValues };
-        const pks = schema[dataTable].primaryKeys;
+        const pks = schema[dataTable]?.primaryKeys || [];
         let idOrFilters;
         if (pks.length === 1) {
           idOrFilters = editRow[pks[0]];
-        } else {
+        } else if (pks.length > 1) {
+          // Composite primary key
           idOrFilters = Object.fromEntries(pks.map(pk => [pk, editRow[pk]]));
+        } else {
+          // No primary keys - use all original row values as filters
+          idOrFilters = { ...editRow };
         }
         await updateRecord(connectionId, dataTable, idOrFilters, payload);
       }
@@ -169,8 +177,14 @@ const Schema = () => {
 
   // Delete handlers
   const openDeleteDialog = (row) => {
-    const pks = schema[dataTable]?.primaryKeys
-    setDeleteTargetKey(pks ? Object.fromEntries(pks.map(pk => [pk, row[pk]])) : null);
+    const pks = schema[dataTable]?.primaryKeys;
+    if (pks && pks.length > 0) {
+      // Use primary keys as filters
+      setDeleteTargetKey(Object.fromEntries(pks.map(pk => [pk, row[pk]])));
+    } else {
+      // No primary key - use all columns as filters to identify the row
+      setDeleteTargetKey({ ...row });
+    }
     setDeleteTargetRow(row);
     setDeleteError(null);
     setDeleteConfirmOpen(true);
@@ -186,13 +200,12 @@ const Schema = () => {
     setDeleteLoading(true);
     setDeleteError(null);
     try {
-      // Determine whether we have a composite PK object or a single id
-      if (!schema[dataTable]?.primaryKeys || schema[dataTable].primaryKeys.length === 0) throw new Error('Primary key not found for table');
+      // Use deleteTargetKey which contains either PK values or all column values for tables without PKs
+      if (!deleteTargetKey || Object.keys(deleteTargetKey).length === 0) {
+        throw new Error('Could not determine row filters to delete');
+      }
 
-      let payloadOrId = deleteTargetKey ?? (deleteTargetRow && deleteTargetRow[schema[dataTable].primaryKeys[0]]);
-      if (payloadOrId === undefined || payloadOrId === null) throw new Error('Could not determine row id to delete');
-
-      await deleteRecord(connectionId, dataTable, payloadOrId);
+      await deleteRecord(connectionId, dataTable, deleteTargetKey);
       window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Row deleted', severity: 'success' } }));
       closeDeleteDialog();
       // Refresh current table data

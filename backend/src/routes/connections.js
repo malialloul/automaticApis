@@ -603,7 +603,7 @@ router.post('/:id/preview', async (req, res) => {
           continue; // cannot join yet
         }
 
-        joinsSql += ` ${type} JOIN ${qb.sanitizeIdentifier(joinTable)} ${qb.sanitizeIdentifier(joinAlias)} ON ${qb.sanitizeIdentifier(fromAlias)}.${qb.sanitizeIdentifier(fromField)} = ${qb.sanitizeIdentifier(toAlias)}.${qb.sanitizeIdentifier(toField)}`;
+        joinsSql += ` ${type} JOIN ${qb.sanitizeIdentifier(joinTable)} ${joinAlias} ON ${fromAlias}.${qb.sanitizeIdentifier(fromField)} = ${toAlias}.${qb.sanitizeIdentifier(toField)}`;
         joinedTables.add(joinTable);
         processed.add(i);
         added = true;
@@ -755,22 +755,24 @@ router.post('/:id/preview', async (req, res) => {
     if (joins.length > 0) {
       // Ensure we have at least something to select, falling back to source.* if empty
       const sel = transformedSelects.length > 0 ? transformedSelects.join(', ') : (finalSelects.length > 0 ? finalSelects.join(', ') : `${getAlias(sourceTable)}.*`);
-      sql = `SELECT ${sel} FROM ${qb.sanitizeIdentifier(sourceTable)} ${qb.sanitizeIdentifier(getAlias(sourceTable))}${joinsSql}`;
+      sql = `SELECT ${sel} FROM ${qb.sanitizeIdentifier(sourceTable)} ${getAlias(sourceTable)}${joinsSql}`;
     } else {
       // No joins, fallback to selects or default
       if (transformedSelects.length > 0) {
-        sql = `SELECT ${transformedSelects.join(', ')} FROM ${qb.sanitizeIdentifier(sourceTable)} ${qb.sanitizeIdentifier(getAlias(sourceTable))}`;
+        sql = `SELECT ${transformedSelects.join(', ')} FROM ${qb.sanitizeIdentifier(sourceTable)} ${getAlias(sourceTable)}`;
       } else if (finalSelects.length > 0) {
-        sql = `SELECT ${finalSelects.join(', ')} FROM ${qb.sanitizeIdentifier(sourceTable)} ${qb.sanitizeIdentifier(getAlias(sourceTable))}`;
+        sql = `SELECT ${finalSelects.join(', ')} FROM ${qb.sanitizeIdentifier(sourceTable)} ${getAlias(sourceTable)}`;
       } else {
-        sql = `SELECT ${getAlias(sourceTable)}.* FROM ${qb.sanitizeIdentifier(sourceTable)} ${qb.sanitizeIdentifier(getAlias(sourceTable))}`;
+        sql = `SELECT ${getAlias(sourceTable)}.* FROM ${qb.sanitizeIdentifier(sourceTable)} ${getAlias(sourceTable)}`;
       }
     }
 
     // WHERE clauses (basic)
     const whereClauses = [];
     const params = [];
-    (graph.filters || []).forEach((f) => {
+    
+    // Helper function to process a single filter
+    const processFilter = (f) => {
       let table = f.table || f.source || (f.field || '').split('.')[0];
       // If table is an alias, resolve it to actual table name
       const resolvedTable = Object.keys(aliasMap).find(k => aliasMap[k] === table) || table;
@@ -805,7 +807,16 @@ router.post('/:id/preview', async (req, res) => {
         const p = qb.addParam(f.value);
         whereClauses.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(field)} ${sqlOp} ${p}`);
       }
-    });
+    };
+    
+    // Process filters from graph definition
+    (graph.filters || []).forEach(processFilter);
+    
+    // Process additional filters from request body (runtime filters from "Try It")
+    const additionalFilters = req.body && req.body.additionalFilters;
+    if (Array.isArray(additionalFilters)) {
+      additionalFilters.forEach(processFilter);
+    }
 
     // HAVING (process early to collect HAVING->WHERE conversions)
     const havingAsWhereClauses = [];
