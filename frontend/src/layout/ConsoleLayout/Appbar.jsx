@@ -5,6 +5,7 @@ import HomeIcon from "@mui/icons-material/Home";
 import StorageIcon from "@mui/icons-material/Storage";
 import { Brightness4, Brightness7 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
+import TourHelpButton from "../../_shared/tour/TourHelpButton";
 
 export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
     const {
@@ -56,6 +57,7 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
                     !tabs[idx].disabled && navigate(tabs[idx].path)
                 }
                 sx={{ minHeight: 48, height: 48 }}
+                data-tour="nav-tabs"
             >
                 {tabs.map((t) => {
                     const tabEl = (
@@ -79,7 +81,8 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
                 })}
             </Tabs>
             <Box sx={{ flex: 1 }} />
-            <IconButton onClick={() => setDarkMode(!darkMode)} color="inherit">
+            <TourHelpButton />
+            <IconButton onClick={() => setDarkMode(!darkMode)} color="inherit" data-tour="theme-toggle">
                 {darkMode ? <Brightness7 /> : <Brightness4 />}
             </IconButton>
         </Toolbar>

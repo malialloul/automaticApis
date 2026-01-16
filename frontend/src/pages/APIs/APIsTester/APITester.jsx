@@ -467,7 +467,7 @@ const APITester = ({
   }
 
   return (
-    <Box>
+    <Box data-tour="api-tester">
       {/* Header with endpoint info */}
       <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -532,6 +532,7 @@ const APITester = ({
       )}
 
       {operation !== "POST" && (
+        <Box data-tour="api-tester-filters">
         <AdditionalFiltersToggle
           schema={schema}
           selectedTable={selectedTable}
@@ -552,6 +553,7 @@ const APITester = ({
           operation={operation}
           renderFilterField={renderFilterField}
         />
+        </Box>
       )}
 
       {/* Send Button */}
@@ -585,7 +587,7 @@ const APITester = ({
       )}
 
       {response && (
-        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: "hidden" }}>
+        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: "hidden" }} data-tour="api-tester-response">
           <Box 
             sx={{ 
               p: 2, 
