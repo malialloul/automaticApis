@@ -22,7 +22,13 @@ import {
   Chip,
   Autocomplete,
   Tooltip,
+  alpha,
+  useTheme,
 } from "@mui/material";
+import SendIcon from "@mui/icons-material/Send";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ErrorIcon from "@mui/icons-material/Error";
+import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import ReactJson from "@microlink/react-json-view";
 import { getSchema, listRecords, getOperators } from "../../../services/api";
 import api from "../../../services/api";
@@ -43,6 +49,7 @@ const APITester = ({
   operatorsMap,
 }) => {
   const { schema } = useContext(AppContext);
+  const theme = useTheme();
 
   const [bodyFields, setBodyFields] = useState({});
   const [nextAutoId, setNextAutoId] = useState(null);
@@ -443,8 +450,16 @@ const APITester = ({
 
   if (!schema) {
     return (
-      <Paper elevation={3} sx={{ p: 3 }}>
-        <Typography>
+      <Paper 
+        variant="outlined" 
+        sx={{ 
+          p: 4, 
+          textAlign: "center",
+          borderRadius: 3,
+          borderStyle: "dashed",
+        }}
+      >
+        <Typography color="text.secondary">
           No schema loaded. Please introspect a database first.
         </Typography>
       </Paper>
@@ -452,29 +467,52 @@ const APITester = ({
   }
 
   return (
-    <Paper elevation={3} sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-        <Typography variant="h6">API Tester</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
-          <Chip
-            label={operation}
-            size="small"
-            color={getMethodColor(operation)}
-          />
-          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-            {endpoint?.path || `/${connectionId}/${selectedTable}`}
-          </Typography>
+    <Box>
+      {/* Header with endpoint info */}
+      <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Box
+            sx={{
+              width: 44,
+              height: 44,
+              borderRadius: 2,
+              background: "linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <SendIcon sx={{ color: "white", fontSize: 22 }} />
+          </Box>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6" fontWeight={700}>API Tester</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+              <Chip
+                label={operation}
+                size="small"
+                color={getMethodColor(operation)}
+                sx={{ fontWeight: 600, height: 24 }}
+              />
+              <Typography 
+                variant="body2" 
+                sx={{ 
+                  fontFamily: 'monospace',
+                  color: "text.secondary",
+                }}
+              >
+                {endpoint?.path || `/${connectionId}/${selectedTable}`}
+              </Typography>
+            </Box>
+          </Box>
         </Box>
-      </Box>
+      </Paper>
 
       {(operation === "POST" || operation === "PUT") && (
-        <Grid container spacing={2} sx={{ mt: 1 }}>
-          <Grid item xs={12}>
-            <Typography variant="subtitle2">
-              {operation === "POST" ? "Request Body" : "Fields to Update"}
-            </Typography>
-          </Grid>
-          <Box display={"flex"} flexDirection={"column"} gap={2} sx={{ mt: 1 }}>
+        <Paper variant="outlined" sx={{ p: 2.5, mb: 3, borderRadius: 3 }}>
+          <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2 }}>
+            {operation === "POST" ? "Request Body" : "Fields to Update"}
+          </Typography>
+          <Box display={"flex"} flexDirection={"column"} gap={2}>
             {schema &&
               selectedTable &&
               (schema[selectedTable]?.columns || []).map((col) => {
@@ -490,7 +528,7 @@ const APITester = ({
                 return renderFilterField(col, false);
               })}
           </Box>
-        </Grid>
+        </Paper>
       )}
 
       {operation !== "POST" && (
@@ -516,52 +554,88 @@ const APITester = ({
         />
       )}
 
-      <>
-        <Grid container spacing={2} sx={{ mt: 1 }}>
-          <Grid item xs={12}>
-            <Button
-              variant="contained"
-              onClick={handleSend}
-              disabled={loading}
-              fullWidth
-            >
-              {loading ? <CircularProgress size={24} /> : "Send Request"}
-            </Button>
-          </Grid>
-        </Grid>
+      {/* Send Button */}
+      <Button
+        variant="contained"
+        onClick={handleSend}
+        disabled={loading}
+        fullWidth
+        size="large"
+        startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
+        sx={{ 
+          mb: 3, 
+          py: 1.5, 
+          borderRadius: 2,
+          textTransform: "none",
+          fontWeight: 600,
+          fontSize: 16,
+        }}
+      >
+        {loading ? "Sending..." : "Send Request"}
+      </Button>
 
-        {error && (
-          <Alert severity="error" sx={{ mt: 2 }}>
-            {error}
-          </Alert>
-        )}
+      {error && (
+        <Alert 
+          severity="error" 
+          sx={{ mb: 3, borderRadius: 2 }}
+          icon={<ErrorIcon />}
+        >
+          {error}
+        </Alert>
+      )}
 
-        {response && (
-          <Box sx={{ mt: 3 }}>
-            <Divider sx={{ mb: 2 }} />
-            <Typography variant="h6" gutterBottom>
-              Response
-            </Typography>
-
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                <strong>Status:</strong> {response.status} {response.statusText}
-              </Typography>
-              {response.timing && (
-                <Typography variant="body2">
-                  <strong>Time:</strong> {response.timing}
-                </Typography>
+      {response && (
+        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: "hidden" }}>
+          <Box 
+            sx={{ 
+              p: 2, 
+              borderBottom: 1, 
+              borderColor: "divider",
+              bgcolor: response.status >= 200 && response.status < 300 
+                ? alpha(theme.palette.success.main, 0.1)
+                : alpha(theme.palette.error.main, 0.1),
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              {response.status >= 200 && response.status < 300 ? (
+                <CheckCircleIcon sx={{ color: "success.main" }} />
+              ) : (
+                <ErrorIcon sx={{ color: "error.main" }} />
               )}
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle1" fontWeight={600}>
+                  Response
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Chip
+                    label={`${response.status} ${response.statusText}`}
+                    size="small"
+                    color={response.status >= 200 && response.status < 300 ? "success" : "error"}
+                    sx={{ fontWeight: 600, height: 24 }}
+                  />
+                  {response.timing && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <AccessTimeIcon sx={{ fontSize: 14, color: "text.secondary" }} />
+                      <Typography variant="caption" color="text.secondary">
+                        {response.timing}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              </Box>
             </Box>
+          </Box>
 
-            <Typography variant="subtitle2" gutterBottom>
-              Response Body:
+          <Box sx={{ p: 2 }}>
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
+              Response Body
             </Typography>
-            <Box
+            <Paper
+              variant="outlined"
               sx={{
                 bgcolor: "grey.900",
                 p: 2,
-                borderRadius: 1,
+                borderRadius: 2,
                 overflow: "auto",
                 maxHeight: 400,
               }}
@@ -573,12 +647,13 @@ const APITester = ({
                 displayObjectSize={false}
                 enableClipboard={true}
                 collapsed={1}
+                style={{ backgroundColor: 'transparent' }}
               />
-            </Box>
+            </Paper>
           </Box>
-        )}
-      </>
-    </Paper>
+        </Paper>
+      )}
+    </Box>
   );
 };
 

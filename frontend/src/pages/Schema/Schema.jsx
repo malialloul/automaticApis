@@ -321,93 +321,125 @@ const Schema = () => {
   );
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-      <Grid container spacing={3}>
-        <Grid item xs={12}>
-          <Paper elevation={3} sx={{ p: 3 }}>
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 2,
-              }}
-            >
-              <Typography variant="h5" gutterBottom>
-                Database Schema
-              </Typography>
-              <Button variant="outlined" onClick={refreshSchema} disabled={loading}>
-                Refresh Schema
-              </Button>
-            </Box>
-
-            <TextField
-              fullWidth
-              placeholder="Search tables..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              sx={{ mb: 2 }}
-            />
-
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              {filteredTables.length} table(s) found
+    <Box sx={{ p: 3 }}>
+      {/* Header */}
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 2.5,
+          mb: 3,
+          borderRadius: 3,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Box
+            sx={{
+              width: 48,
+              height: 48,
+              borderRadius: 2,
+              background: "linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span style={{ fontSize: 24 }}>📊</span>
+          </Box>
+          <Box>
+            <Typography variant="h5" fontWeight={700}>
+              Schema Browser
             </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Explore tables, columns, and relationships
+            </Typography>
+          </Box>
+        </Box>
+        <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+          <TextField
+            size="small"
+            placeholder="Search tables..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            sx={{ width: 250 }}
+            InputProps={{
+              sx: { borderRadius: 2 },
+            }}
+          />
+          <Button
+            variant="contained"
+            onClick={refreshSchema}
+            disabled={loading}
+            sx={{
+              borderRadius: 2,
+              textTransform: "none",
+              px: 2.5,
+            }}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </Button>
+        </Box>
+      </Paper>
 
-            <TablesList
-              setDataTable={setDataTable}
-              filteredTables={filteredTables}
-              schema={schema}
-              loading={loading}
-              openAddDialog={(tableName) => { setDataTable(tableName); openAddDialog(tableName); }}
-              openDataViewer={openDataViewer}
-              handleExportTable={handleExportTable}
-            />
+      {/* Tables count */}
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {filteredTables.length} table{filteredTables.length !== 1 ? "s" : ""} found
+      </Typography>
 
-            <DataDialog
-              setDataTable={setDataTable}
-              open={dataOpen}
-              onClose={closeDataViewer}
-              dataTable={dataTable}
-              dataRows={dataRows}
-              dataLoading={dataLoading}
-              dataError={dataError}
-              limit={limit}
-              setLimit={setLimit}
-              offset={offset}
-              handlePrevPage={handlePrevPage}
-              handleNextPage={handleNextPage}
-              dataColumns={dataColumns}
-              handleChangeOrder={handleChangeOrder}
-              openEditDialog={openEditDialog}
-              openDeleteDialog={openDeleteDialog}
-              deleteLoading={deleteLoading}
-              deleteTargetKey={deleteTargetKey}
-              fetchTableData={fetchTableData}
-            />
-            <EditDialog
-              open={editOpen}
-              onClose={closeEditDialog}
-              tableColumns={tableColumns}
-              renderInputField={renderInputField}
-              editMode={editMode}
-              editError={editError}
-              editLoading={editLoading}
-              handleEditSubmit={handleEditSubmit}
-            />
-            <DeleteDialog
-              open={deleteConfirmOpen}
-              onClose={closeDeleteDialog}
-              deleteTargetRow={deleteTargetRow}
-              deleteTargetKey={deleteTargetKey}
-              deleteError={deleteError}
-              deleteLoading={deleteLoading}
-              handleDeleteConfirm={handleDeleteConfirm}
-            />
-          </Paper>
-        </Grid>
-      </Grid>
-    </Container>
+      {/* Tables List */}
+      <TablesList
+        setDataTable={setDataTable}
+        filteredTables={filteredTables}
+        schema={schema}
+        loading={loading}
+        openAddDialog={(tableName) => { setDataTable(tableName); openAddDialog(tableName); }}
+        openDataViewer={openDataViewer}
+        handleExportTable={handleExportTable}
+      />
 
+      <DataDialog
+        setDataTable={setDataTable}
+        open={dataOpen}
+        onClose={closeDataViewer}
+        dataTable={dataTable}
+        dataRows={dataRows}
+        dataLoading={dataLoading}
+        dataError={dataError}
+        limit={limit}
+        setLimit={setLimit}
+        offset={offset}
+        handlePrevPage={handlePrevPage}
+        handleNextPage={handleNextPage}
+        dataColumns={dataColumns}
+        handleChangeOrder={handleChangeOrder}
+        openEditDialog={openEditDialog}
+        openDeleteDialog={openDeleteDialog}
+        deleteLoading={deleteLoading}
+        deleteTargetKey={deleteTargetKey}
+        fetchTableData={fetchTableData}
+      />
+      <EditDialog
+        open={editOpen}
+        onClose={closeEditDialog}
+        tableColumns={tableColumns}
+        renderInputField={renderInputField}
+        editMode={editMode}
+        editError={editError}
+        editLoading={editLoading}
+        handleEditSubmit={handleEditSubmit}
+      />
+      <DeleteDialog
+        open={deleteConfirmOpen}
+        onClose={closeDeleteDialog}
+        deleteTargetRow={deleteTargetRow}
+        deleteTargetKey={deleteTargetKey}
+        deleteError={deleteError}
+        deleteLoading={deleteLoading}
+        handleDeleteConfirm={handleDeleteConfirm}
+      />
+    </Box>
   );
 };
 

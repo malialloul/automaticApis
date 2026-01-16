@@ -1,64 +1,81 @@
-import { Box, Grid, Typography, Skeleton } from "@mui/material"
+import { Box, Grid, Typography, Skeleton, alpha, useTheme } from "@mui/material"
 import TableChartIcon from "@mui/icons-material/TableChart";
-import StorageIcon from "@mui/icons-material/Storage";
-import LinkIcon from "@mui/icons-material/Link";
+import ViewColumnIcon from "@mui/icons-material/ViewColumn";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import ApiIcon from "@mui/icons-material/Api";
 
-export const KeyMetrics = ({ displayStats, loadingStats, }) => {
+const MetricCard = ({ icon: Icon, label, value, color, loading }) => {
+    const theme = useTheme();
+    
+    return (
+        <Box 
+            sx={{ 
+                bgcolor: "background.paper",
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 3, 
+                p: 2.5,
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
+                transition: "all 0.2s ease",
+                "&:hover": {
+                    borderColor: color,
+                    boxShadow: `0 4px 20px ${alpha(color, 0.15)}`,
+                }
+            }}
+        >
+            <Box
+                sx={{
+                    width: 52,
+                    height: 52,
+                    borderRadius: 2,
+                    bgcolor: alpha(color, 0.1),
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                }}
+            >
+                <Icon sx={{ fontSize: 26, color: color }} />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="body2" color="text.secondary" fontWeight={500} noWrap>
+                    {label}
+                </Typography>
+                {loading ? (
+                    <Skeleton variant="text" width={60} height={40} />
+                ) : (
+                    <Typography variant="h4" fontWeight={700} sx={{ color: color }}>
+                        {value ?? '—'}
+                    </Typography>
+                )}
+            </Box>
+        </Box>
+    );
+};
+
+export const KeyMetrics = ({ displayStats, loadingStats }) => {
+    const metrics = [
+        { icon: TableChartIcon, label: "Tables", value: displayStats?.tableCount, color: "#3B82F6" },
+        { icon: ViewColumnIcon, label: "Columns", value: displayStats?.columnCount, color: "#8B5CF6" },
+        { icon: AccountTreeIcon, label: "Relations", value: displayStats?.relationshipCount, color: "#10B981" },
+        { icon: ApiIcon, label: "Endpoints", value: displayStats?.endpointCount, color: "#F59E0B" },
+    ];
+
     return (
         <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
-                <Box sx={{ bgcolor: "#1E293B", border: "1px solid #334155", borderRadius: 3, p: 3, height: 140 }}>
-                    <TableChartIcon sx={{ fontSize: 24, color: "#3B82F6" }} />
-                    <Typography sx={{ color: "#94A3B8", fontSize: 14, fontWeight: 500 }}>Tables</Typography>
-                    {displayStats ? (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>{displayStats.tableCount}</Typography>
-                    ) : loadingStats ? (
-                        <Skeleton variant="text" width={80} height={48} />
-                    ) : (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>–</Typography>
-                    )}
-                </Box>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-                <Box sx={{ bgcolor: "#1E293B", border: "1px solid #334155", borderRadius: 3, p: 3, height: 140 }}>
-                    <StorageIcon sx={{ fontSize: 24, color: "#8B5CF6" }} />
-                    <Typography sx={{ color: "#94A3B8", fontSize: 14, fontWeight: 500 }}>Total Columns</Typography>
-                    {displayStats ? (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>{displayStats.columnCount ?? '–'}</Typography>
-                    ) : loadingStats ? (
-                        <Skeleton variant="text" width={80} height={48} />
-                    ) : (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>–</Typography>
-                    )}
-                </Box>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-                <Box sx={{ bgcolor: "#1E293B", border: "1px solid #334155", borderRadius: 3, p: 3, height: 140 }}>
-                    <LinkIcon sx={{ fontSize: 24, color: "#10B981" }} />
-                    <Typography sx={{ color: "#94A3B8", fontSize: 14, fontWeight: 500 }}>Relationships</Typography>
-                    {displayStats ? (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>{displayStats.relationshipCount}</Typography>
-                    ) : loadingStats ? (
-                        <Skeleton variant="text" width={80} height={48} />
-                    ) : (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>–</Typography>
-                    )}
-                </Box>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-                <Box sx={{ bgcolor: "#1E293B", border: "1px solid #334155", borderRadius: 3, p: 3, height: 140 }}>
-                    <ApiIcon sx={{ fontSize: 24, color: "#F59E0B" }} />
-                    <Typography sx={{ color: "#94A3B8", fontSize: 14, fontWeight: 500 }}>API Endpoints</Typography>
-                    {displayStats ? (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>{displayStats.endpointCount}</Typography>
-                    ) : loadingStats ? (
-                        <Skeleton variant="text" width={80} height={48} />
-                    ) : (
-                        <Typography sx={{ color: "#F1F5F9", fontSize: 48, fontWeight: 700, lineHeight: 1 }}>–</Typography>
-                    )}
-                </Box>
-            </Grid>
+            {metrics.map((metric, idx) => (
+                <Grid item xs={6} sm={6} md={3} key={idx}>
+                    <MetricCard 
+                        icon={metric.icon}
+                        label={metric.label}
+                        value={metric.value}
+                        color={metric.color}
+                        loading={loadingStats && !displayStats}
+                    />
+                </Grid>
+            ))}
         </Grid>
     )
 }

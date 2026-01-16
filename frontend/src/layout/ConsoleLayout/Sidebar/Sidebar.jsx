@@ -1,12 +1,35 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useConnection } from "../../../_shared/database/useConnection";
-import { AppBar, Avatar, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, List, ListItem, ListItemAvatar, ListItemText, Tab, Tabs, TextField, Toolbar, Tooltip, Typography } from "@mui/material";
+import { LISTENERS } from "../../../_shared/listeners";
+import { 
+    Avatar, 
+    Box, 
+    Button, 
+    Dialog, 
+    DialogActions, 
+    DialogContent, 
+    DialogTitle, 
+    IconButton, 
+    List, 
+    ListItem, 
+    ListItemAvatar, 
+    ListItemText, 
+    Typography,
+    Chip,
+    Tooltip,
+    alpha,
+    useTheme,
+} from "@mui/material";
 import { loadConnections } from "../../../utils/storage";
 import StorageIcon from "@mui/icons-material/Storage";
 import ConnectionForm from "./ConnectionForm";
 import AddIcon from "@mui/icons-material/Add";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import PowerOffIcon from "@mui/icons-material/PowerOff";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 
 export const Sidebar = () => {
+    const theme = useTheme();
     const [openDialog, setOpenDialog] = useState(false);
     const [confirm, setConfirm] = useState({
         open: false,
@@ -20,103 +43,213 @@ export const Sidebar = () => {
         deleteConnection: deleteStored,
         closeConnection
     } = useConnection();
-    const connections = loadConnections()
+    const connections = loadConnections();
+
+    // Listen for open connection form event
+    useEffect(() => {
+        const handleOpenForm = () => setOpenDialog(true);
+        window.addEventListener(LISTENERS.OPEN_ADD_CONNECTION, handleOpenForm);
+        return () => window.removeEventListener(LISTENERS.OPEN_ADD_CONNECTION, handleOpenForm);
+    }, []);
+
+    const getDbTypeColor = (type) => {
+        if (type === 'mysql') return '#00758F';
+        if (type === 'postgres' || type === 'postgresql') return '#336791';
+        return theme.palette.primary.main;
+    };
+
     return <Box
         sx={{
-            width: 240,
+            width: 260,
             flexShrink: 0,
             borderRight: 1,
             borderColor: "divider",
-            p: 2,
             height: "calc(100vh - 64px)",
             position: "sticky",
             top: 64,
             overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            bgcolor: "background.paper",
         }}
     >
-        <Typography variant="overline" color="text.secondary">
-            Active Connections
-        </Typography>
-        <List dense>
+        {/* Header */}
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+                <Typography variant="subtitle2" fontWeight={600} color="text.primary">
+                    Connections
+                </Typography>
+                <Chip 
+                    label={connections.length} 
+                    size="small" 
+                    sx={{ 
+                        height: 20, 
+                        fontSize: 11,
+                        bgcolor: alpha(theme.palette.primary.main, 0.1),
+                        color: "primary.main",
+                    }} 
+                />
+            </Box>
+            <Button
+                variant="contained"
+                fullWidth
+                size="small"
+                startIcon={<AddIcon />}
+                onClick={() => setOpenDialog(true)}
+                sx={{
+                    background: "linear-gradient(135deg, #8B5CF6 0%, #3B82F6 100%)",
+                    boxShadow: "0 2px 8px rgba(139, 92, 246, 0.3)",
+                    "&:hover": {
+                        boxShadow: "0 4px 12px rgba(139, 92, 246, 0.4)",
+                    },
+                }}
+            >
+                New Connection
+            </Button>
+        </Box>
+
+        {/* Connections List */}
+        <Box sx={{ flex: 1, overflowY: "auto", p: 1 }}>
             {connections.length === 0 ? (
                 <Box
                     sx={{
-                        border: "2px dashed #475569",
+                        border: `2px dashed ${alpha(theme.palette.primary.main, 0.3)}`,
                         borderRadius: 2,
-                        p: 2,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        height: 120,
-                        color: "text.secondary",
+                        p: 3,
+                        m: 1,
+                        textAlign: "center",
                     }}
                 >
-                    <Box sx={{ textAlign: "center" }}>
-                        <StorageIcon sx={{ color: "#64748B", fontSize: 32 }} />
-                        <Typography variant="caption">No connections</Typography>
-                    </Box>
+                    <StorageIcon sx={{ color: "text.disabled", fontSize: 40, mb: 1 }} />
+                    <Typography variant="body2" color="text.secondary" fontWeight={500}>
+                        No connections yet
+                    </Typography>
+                    <Typography variant="caption" color="text.disabled">
+                        Add your first database
+                    </Typography>
                 </Box>
             ) : (
-                connections.map((c) => (
-                    <ListItem
-                        key={c.id}
-                        onClick={() => selectConnection(c)}
-                        sx={{
-                            borderRadius: 1,
-                            cursor: "pointer",
-                            bgcolor:
-                                currentConnection?.id === c.id
-                                    ? "action.selected"
-                                    : "unset",
-                            "&:hover": { bgcolor: "action.hover" },
-                        }}
-                    >
-                        <ListItemAvatar>
-                            <Avatar sx={{ bgcolor: "primary.main" }}>
-                                <StorageIcon fontSize="small" />
-                            </Avatar>
-                        </ListItemAvatar>
-                        <ListItemText
-                            primary={c.name || c.database || "Connection"}
-                            secondary={
-                                <Box
-                                    sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                                >
-                                    <Box
-                                        sx={{
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: "50%",
-                                            bgcolor: "success.main",
+                <List dense sx={{ p: 0 }}>
+                    {connections.map((c) => {
+                        const isActive = currentConnection?.id === c.id;
+                        const dbColor = getDbTypeColor(c.type);
+                        
+                        return (
+                            <ListItem
+                                key={c.id}
+                                onClick={() => selectConnection(c)}
+                                secondaryAction={
+                                    isActive && (
+                                        <Box sx={{ display: "flex", gap: 0.5 }}>
+                                            <Tooltip title="Disconnect">
+                                                <IconButton 
+                                                    size="small" 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setConfirm({ open: true, type: "disconnect", target: c });
+                                                    }}
+                                                    sx={{ 
+                                                        opacity: 0.6, 
+                                                        "&:hover": { opacity: 1, color: "warning.main" } 
+                                                    }}
+                                                >
+                                                    <PowerOffIcon fontSize="small" />
+                                                </IconButton>
+                                            </Tooltip>
+                                            <Tooltip title="Delete">
+                                                <IconButton 
+                                                    size="small"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setConfirm({ open: true, type: "delete", target: c });
+                                                    }}
+                                                    sx={{ 
+                                                        opacity: 0.6, 
+                                                        "&:hover": { opacity: 1, color: "error.main" } 
+                                                    }}
+                                                >
+                                                    <DeleteOutlineIcon fontSize="small" />
+                                                </IconButton>
+                                            </Tooltip>
+                                        </Box>
+                                    )
+                                }
+                                sx={{
+                                    borderRadius: 2,
+                                    cursor: "pointer",
+                                    mb: 0.5,
+                                    border: 1,
+                                    borderColor: isActive ? "primary.main" : "transparent",
+                                    bgcolor: isActive 
+                                        ? alpha(theme.palette.primary.main, 0.08)
+                                        : "transparent",
+                                    "&:hover": { 
+                                        bgcolor: isActive 
+                                            ? alpha(theme.palette.primary.main, 0.12)
+                                            : "action.hover",
+                                    },
+                                    transition: "all 0.2s ease",
+                                    pr: isActive ? 10 : 2,
+                                }}
+                            >
+                                <ListItemAvatar sx={{ minWidth: 44 }}>
+                                    <Avatar 
+                                        sx={{ 
+                                            width: 36, 
+                                            height: 36,
+                                            bgcolor: alpha(dbColor, 0.15),
+                                            color: dbColor,
                                         }}
-                                    />
-                                    <Typography variant="caption" color="text.secondary">
-                                        {c.host}:{c.port}
-                                    </Typography>
-                                </Box>
-                            }
-                        />
-                    </ListItem>
-                ))
+                                    >
+                                        <StorageIcon fontSize="small" />
+                                    </Avatar>
+                                </ListItemAvatar>
+                                <ListItemText
+                                    primary={
+                                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                            <Typography 
+                                                variant="body2" 
+                                                fontWeight={600}
+                                                sx={{ 
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {c.name || c.database || "Connection"}
+                                            </Typography>
+                                            {isActive && (
+                                                <CheckCircleIcon 
+                                                    sx={{ fontSize: 14, color: "success.main" }} 
+                                                />
+                                            )}
+                                        </Box>
+                                    }
+                                    secondary={
+                                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.25 }}>
+                                            <Chip 
+                                                label={c.type?.toUpperCase() || "DB"} 
+                                                size="small"
+                                                sx={{ 
+                                                    height: 18, 
+                                                    fontSize: 10,
+                                                    fontWeight: 600,
+                                                    bgcolor: alpha(dbColor, 0.1),
+                                                    color: dbColor,
+                                                }} 
+                                            />
+                                            <Typography variant="caption" color="text.disabled" noWrap>
+                                                {c.host}:{c.port}
+                                            </Typography>
+                                        </Box>
+                                    }
+                                />
+                            </ListItem>
+                        );
+                    })}
+                </List>
             )}
-        </List>
-        <Button
-            variant="contained"
-            fullWidth
-            startIcon={<AddIcon />}
-            onClick={() => setOpenDialog(true)}
-            sx={{
-                mt: 1,
-                background: "linear-gradient(135deg, #8B5CF6 0%, #3B82F6 100%)",
-                boxShadow: "0 4px 12px rgba(139, 92, 246, 0.3)",
-                "&:hover": {
-                    transform: "scale(1.02)",
-                    boxShadow: "0 6px 16px rgba(139, 92, 246, 0.4)",
-                },
-            }}
-        >
-            + New Connection
-        </Button>
+        </Box>
         <Dialog
             open={openDialog}
             onClose={() => setOpenDialog(false)}

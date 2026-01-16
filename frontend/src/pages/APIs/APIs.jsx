@@ -1,7 +1,9 @@
-import { Container, Grid, Drawer, CircularProgress, Button, Box, Snackbar, Alert } from '@mui/material';
+import { Box, Drawer, CircularProgress, Button, Snackbar, Alert, Paper, Typography, alpha, useTheme } from '@mui/material';
 import Builder from './Builder/Builder';
 import EndpointExplorer from './EndpointExplorer';
 import APITester from './APIsTester/APITester';
+import ApiIcon from '@mui/icons-material/Api';
+import BuildIcon from '@mui/icons-material/Build';
 
 import React, { useContext, useState, useRef } from 'react';
 import { useConnection } from '../../_shared/database/useConnection';
@@ -9,6 +11,7 @@ import { useLoadOperators } from '../../_shared/database/useLoadOperators';
 import { AppContext } from '../../App';
 
 const APIs = () => {
+  const theme = useTheme();
   const {
     currentConnection: connection,
   } = useConnection();
@@ -45,11 +48,58 @@ const APIs = () => {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
-      {operatorsLoading && <CircularProgress />}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-        <Button variant="contained" size="small" onClick={() => setBuilderOpen(true)}>Open API Builder</Button>
-      </Box>
+    <Box sx={{ p: 3 }}>
+      {/* Header */}
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 2,
+          mb: 3,
+          borderRadius: 3,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Box
+            sx={{
+              width: 48,
+              height: 48,
+              borderRadius: 2,
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <ApiIcon sx={{ color: 'white', fontSize: 24 }} />
+          </Box>
+          <Box>
+            <Typography variant="h5" fontWeight={700}>
+              API Explorer
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Browse, test, and manage your auto-generated endpoints
+            </Typography>
+          </Box>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+          {operatorsLoading && <CircularProgress size={20} />}
+          <Button 
+            variant="contained" 
+            startIcon={<BuildIcon />}
+            onClick={() => setBuilderOpen(true)}
+            sx={{
+              borderRadius: 2,
+              textTransform: 'none',
+              px: 2.5,
+            }}
+          >
+            API Builder
+          </Button>
+        </Box>
+      </Paper>
 
       <EndpointExplorer
         ref={explorerRef}
@@ -58,7 +108,20 @@ const APIs = () => {
         onGetCode={handleGetCode}
       />
 
-      <Drawer anchor="right" open={builderOpen} onClose={() => setBuilderOpen(false)} PaperProps={{ sx: { width: 1000 } }}>
+      <Drawer 
+        anchor="right" 
+        open={builderOpen} 
+        onClose={() => setBuilderOpen(false)} 
+        PaperProps={{ 
+          sx: { 
+            width: '85vw',
+            maxWidth: 1400,
+            minWidth: 1000,
+            borderTopLeftRadius: 16,
+            borderBottomLeftRadius: 16,
+          } 
+        }}
+      >
         {builderOpen && (
           <Builder onClose={handleBuilderClose} />
         )}
@@ -71,13 +134,25 @@ const APIs = () => {
         onClose={() => setSuccessSnack(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert onClose={() => setSuccessSnack(null)} severity="success" sx={{ width: '100%' }}>
+        <Alert onClose={() => setSuccessSnack(null)} severity="success" sx={{ width: '100%', borderRadius: 2 }}>
           {successSnack}
         </Alert>
       </Snackbar>
 
       {/* Try It Panel */}
-      <Drawer anchor="right" open={tryItOpen} onClose={handleCloseTryIt} PaperProps={{ sx: { width: 600 } }}>
+      <Drawer 
+        anchor="right" 
+        open={tryItOpen} 
+        onClose={handleCloseTryIt} 
+        PaperProps={{ 
+          sx: { 
+            width: 650,
+            borderTopLeftRadius: 16,
+            borderBottomLeftRadius: 16,
+            p: 3,
+          } 
+        }}
+      >
         {tryItOpen && (
           <APITester
             operatorsMap={operators}
@@ -90,19 +165,7 @@ const APIs = () => {
           />
         )}
       </Drawer>
-
-      {/* Get Code Panel
-      <Drawer anchor="right" open={codeOpen} onClose={handleCloseCode} PaperProps={{ sx: { width: 600 } }}>
-        {codeOpen && (
-          <ImplementationSnippets
-            connectionId={connection?.id}
-            endpoint={codeEndpoint}
-            open={codeOpen}
-            onClose={handleCloseCode}
-          />
-        )}
-      </Drawer> */}
-    </Container>
+    </Box>
   );
 };
 

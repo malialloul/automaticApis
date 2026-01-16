@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { useConnection } from "../../_shared/database/useConnection";
-import { AppBar, Box, Button, IconButton, Tab, Tabs, TextField, Toolbar, Tooltip } from "@mui/material";
+import { AppBar, Box, Button, IconButton, Tab, Tabs, Toolbar, Tooltip, Typography } from "@mui/material";
 import HomeIcon from "@mui/icons-material/Home";
-import SearchIcon from "@mui/icons-material/Search";
+import StorageIcon from "@mui/icons-material/Storage";
 import { Brightness4, Brightness7 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
 
@@ -20,9 +20,7 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
                 path: "/er-diagram",
                 disabled: !currentConnection,
             },
-
             { label: "APIs", path: "/db-apis", disabled: !currentConnection },
-            { label: "Docs", path: "/documentation", disabled: !currentConnection },
         ],
         [currentConnection]
     );
@@ -30,13 +28,28 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
     const currentIndex = tabs.findIndex((t) =>
         location.pathname.startsWith(t.path)
     );
-    return <AppBar position="fixed" color="default" sx={{ boxShadow: 1 }}>
+    return <AppBar position="fixed" color="default" sx={{ boxShadow: 1, backdropFilter: "blur(10px)" }}>
         <Toolbar sx={{ gap: 2 }}>
-            <Tooltip title="Back to home">
-                <IconButton color="inherit" onClick={() => navigate('/')} aria-label="home">
-                    <HomeIcon />
-                </IconButton>
-            </Tooltip>
+            {/* Logo/Brand */}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, cursor: "pointer" }} onClick={() => navigate('/')}>
+                <Box
+                    sx={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 2,
+                        background: "linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                    }}
+                >
+                    <StorageIcon sx={{ color: "white", fontSize: 20 }} />
+                </Box>
+                <Typography variant="h6" sx={{ fontWeight: 700, display: { xs: 'none', sm: 'block' } }}>
+                    Prism
+                </Typography>
+            </Box>
+
             <Tabs
                 value={currentIndex === -1 ? 0 : currentIndex}
                 onChange={(_, idx) =>
@@ -66,12 +79,6 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
                 })}
             </Tabs>
             <Box sx={{ flex: 1 }} />
-            <TextField
-                size="small"
-                placeholder="Search (Ctrl/Cmd + K)"
-                InputProps={{ startAdornment: <SearchIcon sx={{ mr: 1 }} /> }}
-            />
-            <Button variant="outlined">Upgrade</Button>
             <IconButton onClick={() => setDarkMode(!darkMode)} color="inherit">
                 {darkMode ? <Brightness7 /> : <Brightness4 />}
             </IconButton>

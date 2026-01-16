@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, Table, TableHead, TableRow, TableCell, TableBody, CircularProgress } from '@mui/material';
+import { Box, Typography, Table, TableHead, TableRow, TableCell, TableBody, CircularProgress, Paper, alpha, useTheme, Chip } from '@mui/material';
+import PreviewIcon from '@mui/icons-material/Preview';
+import TableChartIcon from '@mui/icons-material/TableChart';
 import { listRecords, previewGraph } from '../../../services/api';
 
 // Naive preview that supports simple FK joins where primaryTable has a FK to a secondary table.
-const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [], filters = [], groupBy = [], aggregates = [], having = [], openFilterFor, filterDraft, openAggFor, aggDraft, openGroupFor, groupDraft, openHavingFor, havingDraft, hasValidationErrors = false }) => {
+const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [], filters = [], groupBy = [], aggregates = [], having = [], openFilterFor, filterDraft, openAggFor, aggDraft, openGroupFor, groupDraft, openHavingFor, havingDraft, hasValidationErrors = false, compact = false }) => {
+  const theme = useTheme();
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [cols, setCols] = useState([]);
@@ -267,36 +270,192 @@ const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [
   }, [connectionId, primaryTable, JSON.stringify(outputFields), JSON.stringify(joins), JSON.stringify(filters), JSON.stringify(groupBy), JSON.stringify(aggregates), JSON.stringify(having), openFilterFor, JSON.stringify(filterDraft), openAggFor, JSON.stringify(aggDraft), openGroupFor, JSON.stringify(groupDraft), openHavingFor, JSON.stringify(havingDraft), hasValidationErrors]);
 
   if (!primaryTable) {
-    return <Typography color="text.secondary">No table selected. Add a table to the canvas to see a preview.</Typography>;
+    return (
+      <Box sx={{ textAlign: 'center', py: compact ? 2 : 4 }}>
+        <TableChartIcon sx={{ fontSize: compact ? 32 : 48, color: 'text.disabled', mb: 1 }} />
+        <Typography color="text.secondary" variant={compact ? 'body2' : 'body1'}>
+          Add a table to the canvas to see a preview.
+        </Typography>
+      </Box>
+    );
   }
 
-  if (loading) return <CircularProgress size={20} />;
-  if (error) return <Typography color="error">{error}</Typography>;
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Paper 
+        variant="outlined" 
+        sx={{ 
+          p: 2, 
+          borderRadius: 2, 
+          bgcolor: alpha(theme.palette.error.main, 0.05),
+          borderColor: alpha(theme.palette.error.main, 0.2),
+        }}
+      >
+        <Typography color="error" variant="body2">{error}</Typography>
+      </Paper>
+    );
+  }
 
   const displayCols = cols && cols.length > 0 ? cols : (rows[0] ? Object.keys(rows[0]) : []);
 
+  // Compact mode: just show the table, header is in parent
+  if (compact) {
+    return (
+      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+          <Chip 
+            label={`${rows.length} rows`} 
+            size="small" 
+            sx={{ 
+              height: 22,
+              bgcolor: alpha(theme.palette.success.main, 0.1),
+              color: 'success.main',
+            }} 
+          />
+          <Typography variant="caption" color="text.secondary">
+            Showing up to 5 rows from <strong>{primaryTable}</strong>
+          </Typography>
+        </Box>
+        <Paper 
+          variant="outlined" 
+          sx={{ 
+            flex: 1, 
+            overflow: 'hidden', 
+            borderRadius: 2,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <Box sx={{ overflow: 'auto', flex: 1 }}>
+            <Table size="small" stickyHeader sx={{ 
+              minWidth: 'max-content',
+              '& th': { 
+                bgcolor: theme.palette.mode === 'dark' ? '#1e1e1e' : '#f5f5f5', 
+                fontWeight: 600, 
+                fontSize: '0.75rem',
+                borderBottom: 2,
+                borderColor: 'divider',
+                whiteSpace: 'nowrap',
+                position: 'sticky',
+                top: 0,
+                zIndex: 2,
+              }, 
+              '& td': { fontSize: '0.8rem', py: 0.75, whiteSpace: 'nowrap' } 
+            }}>
+              <TableHead>
+                <TableRow>
+                  {displayCols.map((c) => (
+                    <TableCell key={c}>{c.split('.').pop()}</TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={displayCols.length || 1}>
+                      <Typography variant="body2" color="text.secondary" sx={{ py: 1, textAlign: 'center' }}>
+                        Select fields to see preview
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  rows.map((r, i) => (
+                    <TableRow key={i} hover>
+                      {displayCols.map((c) => (
+                        <TableCell key={c}>{String(r[c] ?? '')}</TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </Box>
+        </Paper>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Box sx={{ mb: 1 }}>
-        <Typography variant="subtitle1">Live Preview</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Showing up to 5 rows from <b>{primaryTable}</b>
-        </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2.5 }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: 2,
+            bgcolor: alpha(theme.palette.success.main, 0.1),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <PreviewIcon sx={{ color: 'success.main', fontSize: 20 }} />
+        </Box>
+        <Box>
+          <Typography variant="subtitle1" fontWeight={600}>Live Preview</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Showing up to 5 rows from <strong>{primaryTable}</strong>
+          </Typography>
+        </Box>
+        <Chip 
+          label={`${rows.length} rows`} 
+          size="small" 
+          sx={{ 
+            ml: 'auto',
+            height: 22,
+            bgcolor: alpha(theme.palette.success.main, 0.1),
+            color: 'success.main',
+          }} 
+        />
       </Box>
-      <Box sx={{ flex: 1, overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-        <Table size="small" stickyHeader sx={{ '& th': { bgcolor: 'background.paper', fontWeight: 'bold', fontSize: '0.8rem' }, '& td': { fontSize: '0.8rem', py: 0.75 } }}>
-          <TableHead>
-            <TableRow>
-              {displayCols.map((c) => (
-                <TableCell key={c}>{c.split('.').pop()}</TableCell>
-              ))}
-            </TableRow>
-          </TableHead>
+      <Paper 
+        variant="outlined" 
+        sx={{ 
+          flex: 1, 
+          overflow: 'hidden', 
+          borderRadius: 2,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <Box sx={{ overflow: 'auto', flex: 1 }}>
+          <Table size="small" stickyHeader sx={{ 
+            minWidth: 'max-content',
+            '& th': { 
+              bgcolor: theme.palette.mode === 'dark' ? '#1e1e1e' : '#f5f5f5', 
+              fontWeight: 600, 
+              fontSize: '0.75rem',
+              borderBottom: 2,
+              borderColor: 'divider',
+              whiteSpace: 'nowrap',
+              position: 'sticky',
+              top: 0,
+              zIndex: 2,
+            }, 
+            '& td': { fontSize: '0.8rem', py: 1, whiteSpace: 'nowrap' } 
+          }}>
+            <TableHead>
+              <TableRow>
+                {displayCols.map((c) => (
+                  <TableCell key={c}>{c.split('.').pop()}</TableCell>
+                ))}
+              </TableRow>
+            </TableHead>
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={displayCols.length || 1}>
-                  <Typography variant="body2" color="text.secondary">No data to display</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+                    No data to display — select fields to see preview
+                  </Typography>
                 </TableCell>
               </TableRow>
             ) : (
@@ -309,8 +468,9 @@ const PreviewPanel = ({ connectionId, primaryTable, outputFields = {}, joins = [
               ))
             )}
           </TableBody>
-        </Table>
-      </Box>
+          </Table>
+        </Box>
+      </Paper>
     </Box>
   );
 };

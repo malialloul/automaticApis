@@ -1,64 +1,130 @@
-import { Box, Grid, Typography } from "@mui/material"
+import { 
+    Box, 
+    Typography, 
+    Paper,
+    alpha,
+    useTheme,
+    Stack,
+} from "@mui/material"
 import { useConnection } from "../../../_shared/database/useConnection";
+import { useNavigate } from "react-router-dom";
+import ApiIcon from "@mui/icons-material/Api";
+import TableChartIcon from "@mui/icons-material/TableChart";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
+import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 
 export const QuickActions = () => {
+    const theme = useTheme();
+    const navigate = useNavigate();
     const { currentConnection } = useConnection();
 
+    const actions = [
+        {
+            icon: <ApiIcon />,
+            label: "View APIs",
+            description: "Browse & test endpoints",
+            color: "#8B5CF6",
+            onClick: () => currentConnection && navigate("/apis"),
+            disabled: !currentConnection,
+        },
+        {
+            icon: <TableChartIcon />,
+            label: "Schema Browser",
+            description: "Explore tables & columns",
+            color: "#3B82F6",
+            onClick: () => currentConnection && navigate("/schema"),
+            disabled: !currentConnection,
+        },
+        {
+            icon: <AccountTreeIcon />,
+            label: "ER Diagram",
+            description: "Visualize relationships",
+            color: "#10B981",
+            onClick: () => currentConnection && navigate("/er-diagram"),
+            disabled: !currentConnection,
+        },
+    ];
+
     return (
-        <Grid container spacing={3} sx={{ mt: 3 }}>
-            <Grid item xs={12} md={12}>
-                <Typography sx={{ mb: 1.5, color: "#F1F5F9", fontWeight: 600, fontSize: 18 }}>Quick Actions</Typography>
-                <Grid container spacing={2}>
-                    <Grid item xs={12}>
-                        <Box onClick={() => navigate("/documentation")} sx={{ cursor: "pointer", bgcolor: "#2A2F45", background: "linear-gradient(135deg, #8B5CF6, #3B82F6)", borderRadius: 3, p: 2.5, height: 100, color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "transform 120ms", "&:hover": { filter: "brightness(1.1)", transform: "scale(1.02)" } }}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                                <Box sx={{ fontSize: 28 }}>💻</Box>
-                                <Box>
-                                    <Typography sx={{ fontWeight: 600, fontSize: 16 }}>Generate Code</Typography>
-                                    <Typography sx={{ fontSize: 13, opacity: 0.8 }}>Get client code in any language</Typography>
-                                </Box>
+        <Paper 
+            variant="outlined" 
+            sx={{ 
+                borderRadius: 3, 
+                overflow: "hidden",
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+            }}
+        >
+            {/* Header */}
+            <Box sx={{ 
+                p: 2, 
+                borderBottom: 1, 
+                borderColor: "divider",
+            }}>
+                <Typography variant="subtitle1" fontWeight={600}>
+                    Quick Actions
+                </Typography>
+            </Box>
+
+            {/* Actions List */}
+            <Stack spacing={1.5} sx={{ p: 2, flex: 1 }}>
+                {actions.map((action, index) => (
+                    <Box
+                        key={index}
+                        onClick={action.disabled ? undefined : action.onClick}
+                        sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            p: 2,
+                            borderRadius: 2,
+                            cursor: action.disabled ? "not-allowed" : "pointer",
+                            opacity: action.disabled ? 0.5 : 1,
+                            border: 1,
+                            borderColor: alpha(action.color, 0.3),
+                            bgcolor: alpha(action.color, 0.05),
+                            transition: "all 0.2s ease",
+                            "&:hover": action.disabled ? {} : {
+                                bgcolor: alpha(action.color, 0.1),
+                                borderColor: action.color,
+                                transform: "translateX(4px)",
+                            },
+                        }}
+                    >
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                            <Box 
+                                sx={{ 
+                                    p: 1,
+                                    borderRadius: 1.5,
+                                    bgcolor: alpha(action.color, 0.15),
+                                    color: action.color,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                }}
+                            >
+                                {action.icon}
                             </Box>
-                            <Box sx={{ fontSize: 20 }}>→</Box>
-                        </Box>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <Box onClick={() => currentConnection && navigate("/apis")} sx={{ cursor: currentConnection ? "pointer" : "default", bgcolor: "#1E293B", border: "2px solid #8B5CF6", borderRadius: 3, p: 2.5, height: 100, color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", opacity: currentConnection ? 1 : 0.6 }}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                                <Box sx={{ fontSize: 24, color: "#8B5CF6" }}>⚡</Box>
-                                <Box>
-                                    <Typography sx={{ fontWeight: 600, fontSize: 16 }}>View All APIs</Typography>
-                                    <Typography sx={{ fontSize: 13, opacity: 0.8 }}>Browse generated endpoints</Typography>
-                                </Box>
+                            <Box>
+                                <Typography variant="body2" fontWeight={600}>
+                                    {action.label}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    {action.description}
+                                </Typography>
                             </Box>
-                            <Box sx={{ fontSize: 20 }}>→</Box>
                         </Box>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <Box onClick={() => currentConnection && navigate("/documentation")} sx={{ cursor: currentConnection ? "pointer" : "default", bgcolor: "#1E293B", border: "2px solid #3B82F6", borderRadius: 3, p: 2.5, height: 100, color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", opacity: currentConnection ? 1 : 0.6 }}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                                <Box sx={{ fontSize: 24, color: "#3B82F6" }}>📄</Box>
-                                <Box>
-                                    <Typography sx={{ fontWeight: 600, fontSize: 16 }}>Export Swagger</Typography>
-                                    <Typography sx={{ fontSize: 13, opacity: 0.8 }}>Download OpenAPI specification</Typography>
-                                </Box>
-                            </Box>
-                            <Box sx={{ fontSize: 20 }}>→</Box>
-                        </Box>
-                    </Grid>
-                    <Grid item xs={12}>
-                        <Box onClick={() => navigate("/schema")} sx={{ cursor: "pointer", bgcolor: "#1E293B", border: "2px solid #10B981", borderRadius: 3, p: 2.5, height: 100, color: "white", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                                <Box sx={{ fontSize: 24, color: "#10B981" }}>🗺️</Box>
-                                <Box>
-                                    <Typography sx={{ fontWeight: 600, fontSize: 16 }}>View ER Diagram</Typography>
-                                    <Typography sx={{ fontSize: 13, opacity: 0.8 }}>Visualize relationships</Typography>
-                                </Box>
-                            </Box>
-                            <Box sx={{ fontSize: 20 }}>→</Box>
-                        </Box>
-                    </Grid>
-                </Grid>
-            </Grid>
-        </Grid>
+                        <ArrowForwardIcon 
+                            sx={{ 
+                                fontSize: 18, 
+                                color: action.color,
+                                opacity: 0.6,
+                            }} 
+                        />
+                    </Box>
+                ))}
+            </Stack>
+        </Paper>
     )
 }
