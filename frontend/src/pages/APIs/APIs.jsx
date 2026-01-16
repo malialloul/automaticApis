@@ -33,11 +33,13 @@ const APIs = () => {
   const handleCloseCode = () => setCodeOpen(false);
  
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [editingEndpoint, setEditingEndpoint] = useState(null);
   const [successSnack, setSuccessSnack] = useState(null);
   const explorerRef = useRef(null);
 
   const handleBuilderClose = (result) => {
     setBuilderOpen(false);
+    setEditingEndpoint(null);
     if (result?.success) {
       setSuccessSnack(result.message);
       // Refresh the endpoints list
@@ -45,6 +47,11 @@ const APIs = () => {
         explorerRef.current.refresh();
       }
     }
+  };
+
+  const handleEditEndpoint = (endpoint) => {
+    setEditingEndpoint(endpoint);
+    setBuilderOpen(true);
   };
 
   return (
@@ -107,12 +114,13 @@ const APIs = () => {
         connectionId={connection?.id}
         onTryIt={handleTryIt}
         onGetCode={handleGetCode}
+        onEditEndpoint={handleEditEndpoint}
       />
 
       <Drawer 
         anchor="right" 
         open={builderOpen} 
-        onClose={() => setBuilderOpen(false)} 
+        onClose={() => { setBuilderOpen(false); setEditingEndpoint(null); }} 
         PaperProps={{ 
           sx: { 
             width: '85vw',
@@ -124,7 +132,7 @@ const APIs = () => {
         }}
       >
         {builderOpen && (
-          <Builder onClose={handleBuilderClose} />
+          <Builder onClose={handleBuilderClose} editingEndpoint={editingEndpoint} />
         )}
       </Drawer>
 

@@ -56,6 +56,16 @@ export const getEndpoint = async (slug) => {
   return response.data;
 };
 
+export const updateEndpoint = async (slug, payload) => {
+  const response = await api.put(`/endpoints/${slug}`, payload);
+  return response.data;
+};
+
+export const deleteEndpoint = async (slug) => {
+  const response = await api.delete(`/endpoints/${slug}`);
+  return response.data;
+};
+
 // Preview API: server-side translation of graph -> sample rows
 export const previewGraph = async (connectionId, graph, limit = 5) => {
   const response = await api.post(`/connections/${connectionId}/preview`, { graph, limit });
