@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Box, Typography, Tooltip } from '@mui/material';
+import { Box, Typography, Tooltip, alpha } from '@mui/material';
 import { Handle, Position } from 'reactflow';
+import KeyIcon from '@mui/icons-material/Key';
+import LinkIcon from '@mui/icons-material/Link';
 
 // TableNode renders a box styled like an ERD table with PK/FK sections
 const TableNode = ({ data }) => {
@@ -11,7 +13,7 @@ const TableNode = ({ data }) => {
   const pkCols = columns.filter((c) => pkSet.has(c.name));
   const nonPkCols = columns.filter((c) => !pkSet.has(c.name));
 
-  // Hover state for handles (store string ids like `${tableName}:${colName}:source`)
+  // Hover state for handles
   const [hoveredHandle, setHoveredHandle] = useState(null);
 
   const hoverKey = (col, type) => `${tableName}:${col}:${type}`;
@@ -19,134 +21,174 @@ const TableNode = ({ data }) => {
 
   return (
     <Box sx={{
-      border: '1px solid #9EA3AE',
-      borderRadius: 1,
-      bgcolor: '#fff',
-      minWidth: 220,
-      boxShadow: '0 1px 0 rgba(0,0,0,0.06)',
-      fontFamily: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
+      border: '1px solid',
+      borderColor: 'divider',
+      borderRadius: 2,
+      bgcolor: 'background.paper',
+      minWidth: 240,
+      boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+      overflow: 'hidden',
     }}>
+      {/* Header */}
       <Box sx={{
-        bgcolor: '#f3f4f6',
-        borderBottom: '1px solid #e5e7eb',
-        p: 1,
+        background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
+        px: 1.5,
+        py: 1,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
       }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#111827' }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'white' }}>
           {tableName}
         </Typography>
       </Box>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: '36px 1fr', columnGap: 1 }}>
-        <Box sx={{ borderRight: '1px solid #e5e7eb' }}>
-          <Typography variant="caption" sx={{ display: 'block', px: 1, py: 0.5, color: '#6b7280' }}>PK</Typography>
-          <Typography variant="caption" sx={{ display: 'block', px: 1, py: 0.5, color: '#6b7280' }}>FK</Typography>
-        </Box>
-        <Box>
-          {/* PK list */}
-          <Box sx={{ px: 1, py: 0.5 }}>
-            {pkCols.length ? (
-              pkCols.map((c) => (
-                <Box key={c.name} sx={{ position: 'relative' }}>
-                  {showColumns && (
-                    <Typography variant="caption" sx={{ display: 'block', color: '#374151' }}>
-                      {c.name}
-                    </Typography>
-                  )}
-                  {/* Always render a target handle for PKs (they can be referenced by FKs) */}
-                  <Tooltip title={c.name} placement="left">
+      {/* Columns */}
+      <Box sx={{ p: 0 }}>
+        {/* PK Section */}
+        {pkCols.length > 0 && (
+          <Box sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
+            {pkCols.map((c) => (
+              <Box 
+                key={c.name} 
+                sx={{ 
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                  bgcolor: (theme) => alpha(theme.palette.success.main, 0.08),
+                  '&:hover': { bgcolor: (theme) => alpha(theme.palette.success.main, 0.15) },
+                }}
+              >
+                <KeyIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 600, flex: 1 }}>
+                  {c.name}
+                </Typography>
+                <Typography variant="caption" sx={{ color: 'text.disabled', fontFamily: 'monospace', fontSize: 10 }}>
+                  {c.type}
+                </Typography>
+                
+                {/* Target handle for PK */}
+                <Tooltip title={c.name} placement="left">
+                  <span
+                    onMouseEnter={() => setHoveredHandle(hoverKey(c.name, 'target'))}
+                    onMouseLeave={() => setHoveredHandle(null)}
+                  >
+                    <Handle
+                      type="target"
+                      position={Position.Left}
+                      id={`${tableName}:${c.name}`}
+                      style={{
+                        left: -5,
+                        width: isHovered(c.name, 'target') ? 12 : 8,
+                        height: isHovered(c.name, 'target') ? 12 : 8,
+                        background: isHovered(c.name, 'target') ? '#10B981' : '#6b7280',
+                        border: '2px solid #10B981',
+                        transition: 'all 120ms ease',
+                      }}
+                    />
+                  </span>
+                </Tooltip>
+                
+                {/* Source handle if PK is also FK */}
+                {fkSet.has(c.name) && (
+                  <Tooltip title={c.name} placement="right">
                     <span
-                      onMouseEnter={() => setHoveredHandle(hoverKey(c.name, 'target'))}
+                      onMouseEnter={() => setHoveredHandle(hoverKey(c.name, 'source'))}
                       onMouseLeave={() => setHoveredHandle(null)}
                     >
                       <Handle
-                        type="target"
-                        position={Position.Left}
+                        type="source"
+                        position={Position.Right}
                         id={`${tableName}:${c.name}`}
                         style={{
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          left: -6,
-                          width: isHovered(c.name, 'target') ? 12 : 8,
-                          height: isHovered(c.name, 'target') ? 12 : 8,
-                          background: isHovered(c.name, 'target') ? '#374151' : '#6b7280',
-                          border: '1px solid #374151',
-                          transition: 'width 120ms, height 120ms, background 120ms',
+                          right: -5,
+                          width: isHovered(c.name, 'source') ? 12 : 8,
+                          height: isHovered(c.name, 'source') ? 12 : 8,
+                          background: isHovered(c.name, 'source') ? '#3B82F6' : '#6b7280',
+                          border: '2px solid #3B82F6',
+                          transition: 'all 120ms ease',
                         }}
                       />
                     </span>
                   </Tooltip>
-                  {/* If this PK is also an FK (common in join tables), render a source handle as well so we can attach outgoing edges from it */}
-                  {fkSet.has(c.name) && (
-                    <Tooltip title={c.name} placement="right">
-                      <span
-                        onMouseEnter={() => setHoveredHandle(hoverKey(c.name, 'source'))}
-                        onMouseLeave={() => setHoveredHandle(null)}
-                      >
-                        <Handle
-                          type="source"
-                          position={Position.Right}
-                          id={`${tableName}:${c.name}`}
-                          style={{
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            right: -6,
-                            width: isHovered(c.name, 'source') ? 12 : 8,
-                            height: isHovered(c.name, 'source') ? 12 : 8,
-                            background: isHovered(c.name, 'source') ? '#0369a1' : '#0ea5e9',
-                            border: '1px solid #374151',
-                            transition: 'width 120ms, height 120ms, background 120ms',
-                          }}
-                        />
-                      </span>
-                    </Tooltip>
-                  )}
-                </Box>
-              ))
-            ) : (
-              <Typography variant="caption" sx={{ color: '#9CA3AF' }}>—</Typography>
+                )}
+              </Box>
+            ))}
+          </Box>
+        )}
+        
+        {/* Non-PK columns */}
+        {nonPkCols.map((c) => (
+          <Box 
+            key={c.name} 
+            sx={{ 
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              px: 1.5,
+              py: 0.75,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              '&:last-child': { borderBottom: 0 },
+              '&:hover': { bgcolor: 'action.hover' },
+              ...(fkSet.has(c.name) && {
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.05),
+              }),
+            }}
+          >
+            {fkSet.has(c.name) && (
+              <LinkIcon sx={{ fontSize: 14, color: 'primary.main' }} />
+            )}
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                color: fkSet.has(c.name) ? 'primary.main' : 'text.primary',
+                fontWeight: fkSet.has(c.name) ? 600 : 400,
+                flex: 1,
+              }}
+            >
+              {c.name}
+            </Typography>
+            <Typography variant="caption" sx={{ color: 'text.disabled', fontFamily: 'monospace', fontSize: 10 }}>
+              {c.type}
+            </Typography>
+            
+            {/* Source handle for FK columns */}
+            {fkSet.has(c.name) && (
+              <Tooltip title={c.name} placement="right">
+                <span
+                  onMouseEnter={() => setHoveredHandle(hoverKey(c.name, 'source'))}
+                  onMouseLeave={() => setHoveredHandle(null)}
+                >
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`${tableName}:${c.name}`}
+                    style={{
+                      right: -5,
+                      width: isHovered(c.name, 'source') ? 12 : 8,
+                      height: isHovered(c.name, 'source') ? 12 : 8,
+                      background: isHovered(c.name, 'source') ? '#3B82F6' : '#6b7280',
+                      border: '2px solid #3B82F6',
+                      transition: 'all 120ms ease',
+                    }}
+                  />
+                </span>
+              </Tooltip>
             )}
           </Box>
-          {/* FK and other columns */}
-          <Box sx={{ px: 1, py: 0.5, borderTop: '1px solid #e5e7eb' }}>
-            {nonPkCols.length ? (
-              nonPkCols.map((c) => (
-                <Box key={c.name} sx={{ position: 'relative' }}>
-                  {showColumns && (
-                    <Typography variant="caption" sx={{ display: 'block', color: fkSet.has(c.name) ? '#0ea5e9' : '#374151' }}>
-                      {c.name}
-                    </Typography>
-                  )}
-                  {fkSet.has(c.name) && (
-                    <Tooltip title={c.name} placement="right">
-                      <span
-                        onMouseEnter={() => setHoveredHandle(hoverKey(c.name, 'source'))}
-                        onMouseLeave={() => setHoveredHandle(null)}
-                      >
-                        <Handle
-                          type="source"
-                          position={Position.Right}
-                          id={`${tableName}:${c.name}`}
-                          style={{
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            right: -6,
-                            width: isHovered(c.name, 'source') ? 12 : 8,
-                            height: isHovered(c.name, 'source') ? 12 : 8,
-                            background: isHovered(c.name, 'source') ? '#0369a1' : '#0ea5e9',
-                            border: '1px solid #374151',
-                            transition: 'width 120ms, height 120ms, background 120ms',
-                          }}
-                        />
-                      </span>
-                    </Tooltip>
-                  )}
-                </Box>
-              ))
-            ) : (
-              <Typography variant="caption" sx={{ color: '#9CA3AF' }}>—</Typography>
-            )}
+        ))}
+        
+        {/* Empty state */}
+        {columns.length === 0 && (
+          <Box sx={{ px: 1.5, py: 1 }}>
+            <Typography variant="caption" color="text.disabled">No columns</Typography>
           </Box>
-        </Box>
+        )}
       </Box>
     </Box>
   );

@@ -1,5 +1,11 @@
 import React, { useState, useContext } from 'react';
-import { Box, Grid, Paper, Button, Typography, Divider, TextField, Snackbar, IconButton } from '@mui/material';
+import { Box, Grid, Paper, Button, Typography, Divider, TextField, Snackbar, IconButton, alpha, useTheme, Dialog, DialogContent, DialogActions, Tooltip, Collapse } from '@mui/material';
+import BuildIcon from '@mui/icons-material/Build';
+import SaveIcon from '@mui/icons-material/Save';
+import CloseIcon from '@mui/icons-material/Close';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import PreviewIcon from '@mui/icons-material/Preview';
 import SchemaSidebar from './SchemaSidebar';
 import Canvas from './Canvas';
 import PreviewPanel from './PreviewPanel';
@@ -11,6 +17,7 @@ const Builder = ({ onClose }) => {
   const { schema } = useContext(AppContext);
   const { currentConnection } = useConnection();
   const connectionId = currentConnection?.id;
+  const theme = useTheme();
 
   // Validation helper
   const isValidSQLIdentifier = (str) => {
@@ -36,6 +43,7 @@ const Builder = ({ onClose }) => {
   const [filters, setFilters] = useState([]); // [{id, table, field, op, value}]
   const [groupBy, setGroupBy] = useState([]); // [{table, field}]
   const [aggregates, setAggregates] = useState([]); // [{id, table, field, func, alias}]
+  const [previewExpanded, setPreviewExpanded] = useState(true); // Preview panel visibility
 
   const [having, setHaving] = useState([]); // [{id, aggField, op, value}]
   const addHaving = (h) => setHaving((s) => [...s, { id: uid(), ...h }]);
@@ -356,28 +364,89 @@ const Builder = ({ onClose }) => {
   };
 
   return (
-    <Box sx={{ p: 2, height: '100%', display: 'flex', gap: 2, flexDirection: 'column' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="h6">API Builder</Typography>
-        <Box>
-          <Button size="small" onClick={openSave} sx={{ mr: 1 }} variant="contained">Save</Button>
-          <Button size="small" onClick={onClose}>Close</Button>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Scrollable Content Area */}
+      <Box sx={{ flex: 1, overflow: 'auto', p: 3.5, pb: 2 }}>
+        {/* Header */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box
+              sx={{
+                width: 48,
+                height: 48,
+                borderRadius: 2,
+                background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <BuildIcon sx={{ color: 'white', fontSize: 24 }} />
+            </Box>
+            <Box>
+              <Typography variant="h5" fontWeight={700}>API Builder</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Create custom endpoints with visual query builder
+              </Typography>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1.5 }}>
+            <Tooltip 
+              title={
+                tables.length === 0 
+                  ? "Add a table first" 
+                  : !Object.values(outputFields).some(f => f && f.length > 0)
+                    ? "Select at least one field"
+                    : ""
+              }
+            >
+              <span>
+                <Button 
+                  onClick={openSave} 
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  disabled={tables.length === 0 || !Object.values(outputFields).some(f => f && f.length > 0)}
+                  sx={{ borderRadius: 2, textTransform: 'none', px: 2.5 }}
+                >
+                  Save Endpoint
+                </Button>
+              </span>
+            </Tooltip>
+            <Button 
+              onClick={onClose}
+              variant="outlined"
+              startIcon={<CloseIcon />}
+              sx={{ borderRadius: 2, textTransform: 'none', px: 2.5 }}
+            >
+              Close
+            </Button>
+          </Box>
         </Box>
-      </Box>
-      <Divider />
 
-      <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1 }}>
-        <Typography variant="body2" color="text.secondary">Add a table → choose fields → optionally add filters or summaries → Save.</Typography>
-      </Box>
-      <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-        <Grid item xs={2.5} sx={{ minHeight: 0 }}>
-          <Paper sx={{ p: 1, height: '100%', overflow: 'auto' }}>
-            <SchemaSidebar schema={schema} onAddTable={addTable} />
-          </Paper>
-        </Grid>
-        <Grid item xs={4.5} sx={{ minHeight: 0 }}>
-          <Paper sx={{ height: '100%', p: 1, overflow: 'auto' }}>
-            <Canvas
+        <Paper 
+          variant="outlined" 
+          sx={{ 
+            p: 2.5, 
+            borderRadius: 2, 
+            bgcolor: alpha(theme.palette.info.main, 0.05),
+            borderColor: alpha(theme.palette.info.main, 0.2),
+            mb: 2.5,
+          }}
+        >
+          <Typography variant="body1" color="text.secondary">
+            <strong>Quick guide:</strong> Add a table → choose fields → optionally add filters or summaries → Save.
+          </Typography>
+        </Paper>
+
+        <Grid container spacing={2.5}>
+          <Grid item xs={12} md={3} sx={{ minWidth: 220 }}>
+            <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+              <SchemaSidebar schema={schema} onAddTable={addTable} />
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={9}>
+            <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+              <Canvas
               tables={tables}
               schema={schema}
               outputFields={outputFields}
@@ -420,8 +489,62 @@ const Builder = ({ onClose }) => {
             />
           </Paper>
         </Grid>
-        <Grid item xs={5} sx={{ minHeight: 0 }}>
-          <Paper sx={{ p: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      </Grid>
+      </Box>
+
+      {/* Fixed Preview Panel at Bottom */}
+      <Paper 
+        variant="outlined" 
+        sx={{ 
+          borderRadius: 0,
+          borderLeft: 0,
+          borderRight: 0,
+          borderBottom: 0,
+          overflow: 'hidden',
+          flexShrink: 0,
+        }}
+      >
+        <Box 
+          sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            p: 1.5,
+            px: 2,
+            bgcolor: alpha(theme.palette.success.main, 0.05),
+            borderBottom: previewExpanded ? 1 : 0,
+            borderColor: 'divider',
+            cursor: 'pointer',
+          }}
+          onClick={() => setPreviewExpanded(!previewExpanded)}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 32,
+                height: 32,
+                borderRadius: 1.5,
+                bgcolor: alpha(theme.palette.success.main, 0.1),
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <PreviewIcon sx={{ color: 'success.main', fontSize: 18 }} />
+            </Box>
+            <Typography variant="subtitle2" fontWeight={600}>Live Preview</Typography>
+            {tables[0] && (
+              <Typography variant="caption" color="text.secondary">
+                — {tables[0]}
+              </Typography>
+            )}
+          </Box>
+          <IconButton size="small">
+            {previewExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+          </IconButton>
+        </Box>
+        <Collapse in={previewExpanded}>
+          <Box sx={{ px: 2.5, py: 2, height: 250, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <PreviewPanel
               connectionId={connectionId}
               primaryTable={tables[0]}
@@ -440,24 +563,96 @@ const Builder = ({ onClose }) => {
               openHavingFor={openHavingFor}
               havingDraft={havingDraft}
               hasValidationErrors={hasValidationErrors()}
+              compact
             />
-          </Paper>
-        </Grid>
-      </Grid>
-
-      {/* Save Modal (stub) */}
-      {saveOpen && (
-        <Paper sx={{ position: 'absolute', left: '50%', top: '20%', transform: 'translate(-50%, 0)', p: 2, width: 600 }}>
-          <Typography variant="h6">Save Endpoint</Typography>
-          <Divider sx={{ my: 1 }} />
-          <TextField fullWidth size="small" label="Friendly name" value={endpointName} onChange={(e) => setEndpointName(e.target.value)} sx={{ mb: 1 }} />
-          <TextField fullWidth size="small" label="Path (slug)" value={endpointSlug} onChange={(e) => setEndpointSlug(e.target.value)} sx={{ mb: 1 }} placeholder="auto generated" />
-          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-            <Button size="small" onClick={() => setSaveOpen(false)}>Cancel</Button>
-            <Button size="small" variant="contained" onClick={doSave}>Save</Button>
           </Box>
-        </Paper>
-      )}
+        </Collapse>
+      </Paper>
+
+      {/* Save Modal */}
+      <Dialog
+        open={saveOpen}
+        onClose={() => setSaveOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            p: 2.5,
+            borderBottom: 1,
+            borderColor: 'divider',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box
+              sx={{
+                width: 44,
+                height: 44,
+                borderRadius: 2,
+                background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <SaveIcon sx={{ color: 'white', fontSize: 22 }} />
+            </Box>
+            <Box>
+              <Typography variant="h6" fontWeight={700}>Save Endpoint</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Create a reusable API endpoint
+              </Typography>
+            </Box>
+          </Box>
+          <IconButton onClick={() => setSaveOpen(false)}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+        <DialogContent sx={{ p: 2.5 }}>
+          <TextField 
+            fullWidth 
+            size="small" 
+            label="Friendly name" 
+            value={endpointName} 
+            onChange={(e) => setEndpointName(e.target.value)} 
+            sx={{ 
+              mb: 2,
+              "& .MuiOutlinedInput-root": { borderRadius: 2 },
+            }} 
+          />
+          <TextField 
+            fullWidth 
+            size="small" 
+            label="Path (slug)" 
+            value={endpointSlug} 
+            onChange={(e) => setEndpointSlug(e.target.value)} 
+            placeholder="Auto generated if empty"
+            sx={{ 
+              "& .MuiOutlinedInput-root": { borderRadius: 2 },
+            }} 
+          />
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5, borderTop: 1, borderColor: 'divider' }}>
+          <Button 
+            onClick={() => setSaveOpen(false)}
+            sx={{ borderRadius: 2, textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            variant="contained" 
+            onClick={doSave}
+            startIcon={<SaveIcon />}
+            sx={{ borderRadius: 2, textTransform: 'none' }}
+          >
+            Save Endpoint
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {snack && (
         <Snackbar

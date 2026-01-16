@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, memo } from 'react';
-import { Paper, Typography, Box, Alert, Stack, FormControlLabel, Switch, IconButton, Tooltip, Snackbar } from '@mui/material';
+import { Paper, Typography, Box, Alert, Stack, FormControlLabel, Switch, IconButton, Tooltip, Snackbar, alpha, useTheme, Chip, Select, MenuItem } from '@mui/material';
 import ReactFlow, { Background, Controls, MiniMap, MarkerType, applyNodeChanges } from 'reactflow';
 import TableNode from './graph/TableNode';
 import CrowsFootEdge from './graph/CrowsFootEdge';
@@ -9,6 +9,10 @@ import 'reactflow/dist/style.css';
 import { getSchema } from '../../../services/api';
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import ImageIcon from "@mui/icons-material/Image";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import { useConnection } from '../../../_shared/database/useConnection';
 
 // Memoize nodeTypes and edgeTypes outside the component to avoid React Flow error 002
@@ -356,79 +360,161 @@ export const RelationshipGraph = () => {
 
 
   return (
-    <Paper elevation={3} sx={{ p: 3, height: '100vh' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-        <Typography variant="h5" gutterBottom>
-          Table Relationships ({databaseName})
-        </Typography>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 3 }}>
+      {/* Header */}
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 2,
+          mb: 2,
+          borderRadius: 3,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Box
+            sx={{
+              width: 48,
+              height: 48,
+              borderRadius: 2,
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <AccountTreeIcon sx={{ color: 'white', fontSize: 24 }} />
+          </Box>
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Typography variant="h5" fontWeight={700}>
+                ER Diagram
+              </Typography>
+              {databaseName && (
+                <Chip 
+                  label={databaseName} 
+                  size="small" 
+                  sx={{ 
+                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                    color: 'primary.main',
+                    fontWeight: 500,
+                  }}
+                />
+              )}
+            </Box>
+            <Typography variant="body2" color="text.secondary">
+              Visualize table relationships and foreign keys
+            </Typography>
+          </Box>
+        </Box>
 
-        <Stack direction="row" spacing={2} alignItems="center">
-
-          <Tooltip title="Copy Mermaid ER diagram">
-            <span>
-              <IconButton onClick={handleCopyMermaid} disabled={!schema}>
-                {/* simple copy icon using Unicode to avoid extra deps */}
-                <span role="img" aria-label="copy">📋</span>
-              </IconButton>
-            </span>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {/* Export buttons */}
+          <Tooltip title="Copy Mermaid ER">
+            <IconButton 
+              onClick={handleCopyMermaid} 
+              disabled={!schema}
+              size="small"
+              sx={{ 
+                bgcolor: 'action.hover',
+                '&:hover': { bgcolor: 'action.selected' },
+              }}
+            >
+              <ContentCopyIcon fontSize="small" />
+            </IconButton>
           </Tooltip>
           <Tooltip title="Export PNG">
-            <span>
-              <IconButton onClick={handleExportPng} disabled={!schema}>
-                <span role="img" aria-label="png">🖼️</span>
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="Export SVG">
-            <span>
-              <IconButton onClick={handleExportSvg} disabled={!schema}>
-                <span role="img" aria-label="svg">🧩</span>
-              </IconButton>
-            </span>
-          </Tooltip>
-
-          <FormControlLabel
-            control={<Switch checked={autoLayout} onChange={(e) => setAutoLayout(e.target.checked)} />}
-            label="Auto Layout"
-          />
-
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Tooltip title="Layout direction">
-              <select
-                value={layoutDirection}
-                onChange={(e) => setLayoutDirection(e.target.value)}
-                style={{ padding: '6px', borderRadius: 4 }}
-              >
-                <option value="LR">Left → Right</option>
-                <option value="TB">Top → Bottom</option>
-              </select>
-            </Tooltip>
-            <Tooltip title="Apply layout">
-              <span>
-                <IconButton onClick={() => setNodes((cur) => applyDagreLayout(cur, edges, layoutDirection))}>
-                  🔁
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Box>
-
-          <Tooltip title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>
-            <IconButton onClick={handleFullscreen} color="inherit">
-              {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+            <IconButton 
+              onClick={handleExportPng} 
+              disabled={!schema}
+              size="small"
+              sx={{ 
+                bgcolor: 'action.hover',
+                '&:hover': { bgcolor: 'action.selected' },
+              }}
+            >
+              <ImageIcon fontSize="small" />
             </IconButton>
           </Tooltip>
 
+          {/* Auto Layout Switch */}
+          <Box 
+            sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              bgcolor: 'action.hover',
+              borderRadius: 2,
+              px: 1.5,
+              py: 0.5,
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+              Auto Layout
+            </Typography>
+            <Switch 
+              checked={autoLayout} 
+              onChange={(e) => setAutoLayout(e.target.checked)} 
+              size="small"
+            />
+          </Box>
+
+          {/* Layout Direction */}
+          <Select
+            value={layoutDirection}
+            onChange={(e) => setLayoutDirection(e.target.value)}
+            size="small"
+            sx={{ 
+              minWidth: 130,
+              '& .MuiSelect-select': { py: 0.75 },
+            }}
+          >
+            <MenuItem value="LR">Left → Right</MenuItem>
+            <MenuItem value="TB">Top → Bottom</MenuItem>
+          </Select>
+
+          {/* Apply Layout */}
+          <Tooltip title="Apply Layout">
+            <IconButton 
+              onClick={() => setNodes((cur) => applyDagreLayout(cur, edges, layoutDirection))}
+              size="small"
+              sx={{ 
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                color: 'primary.main',
+                '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.2) },
+              }}
+            >
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
+          {/* Fullscreen */}
+          <Tooltip title={fullscreen || pseudoFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+            <IconButton 
+              onClick={handleFullscreen}
+              size="small"
+              sx={{ 
+                bgcolor: 'action.hover',
+                '&:hover': { bgcolor: 'action.selected' },
+              }}
+            >
+              {fullscreen || pseudoFullscreen ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
         </Stack>
-      </Box>
-      <Box
+      </Paper>
+
+      {/* Graph Container */}
+      <Paper
         ref={containerRef}
+        variant="outlined"
         sx={(t) => ({
-          height: 'calc(100% - 50px)',
-          border: '1px solid #ddd',
-          borderRadius: 1,
+          flex: 1,
+          borderRadius: 3,
+          overflow: 'hidden',
           bgcolor: t.palette.background.paper,
           transition: 'transform 260ms ease, opacity 200ms ease',
-          // pseudo-fullscreen styles
           ...(pseudoFullscreen
             ? {
               position: 'fixed',
@@ -458,17 +544,23 @@ export const RelationshipGraph = () => {
         >
           <Background />
           <Controls />
-          <MiniMap />
+          <MiniMap 
+            style={{ 
+              backgroundColor: 'rgba(0,0,0,0.1)',
+              borderRadius: 8,
+            }}
+          />
         </ReactFlow>
-      </Box>
+      </Paper>
+
       <Snackbar
         open={copied}
         autoHideDuration={2000}
         onClose={() => setCopied(false)}
-        message="Mermaid ER copied"
+        message="Mermaid ER copied to clipboard"
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       />
-    </Paper>
+    </Box>
   );
 };
 

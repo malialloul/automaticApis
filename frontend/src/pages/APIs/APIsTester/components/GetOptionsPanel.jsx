@@ -1,4 +1,5 @@
-import { Grid, TextField, MenuItem } from "@mui/material";
+import { Box, TextField, MenuItem, Stack } from "@mui/material";
+import SortIcon from "@mui/icons-material/Sort";
 
 const GetOptionsPanel = ({
   columns,
@@ -11,58 +12,67 @@ const GetOptionsPanel = ({
   pageNumber,
   setPageNumber
 }) => (
-  <>
-    <Grid item xs={12} md={4}>
-      <TextField
-        select
-        fullWidth
-        size="small"
-        label="Order By"
-        value={orderBy}
-        onChange={e => setOrderBy(e.target.value)}
-      >
-        {columns.map(c => (
-          <MenuItem key={c.name} value={c.name}>
-            {c.name}
-          </MenuItem>
-        ))}
-      </TextField>
-    </Grid>
+  <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+    <TextField
+      select
+      size="small"
+      label="Order By"
+      value={orderBy}
+      onChange={e => setOrderBy(e.target.value)}
+      sx={{ 
+        minWidth: 160,
+        "& .MuiOutlinedInput-root": { borderRadius: 2 },
+      }}
+    >
+      <MenuItem value="">
+        <em>None</em>
+      </MenuItem>
+      {columns.map(c => (
+        <MenuItem key={c.name} value={c.name}>
+          {c.name}
+        </MenuItem>
+      ))}
+    </TextField>
 
-    <Grid item xs={12} md={2}>
-      <TextField
-        select
-        fullWidth
-        size="small"
-        label="Dir"
-        value={orderDir}
-        onChange={e => setOrderDir(e.target.value)}
-      >
-        <MenuItem value="ASC">ASC</MenuItem>
-        <MenuItem value="DESC">DESC</MenuItem>
-      </TextField>
-    </Grid>
+    <TextField
+      select
+      size="small"
+      label="Direction"
+      value={orderDir}
+      onChange={e => setOrderDir(e.target.value)}
+      sx={{ 
+        minWidth: 100,
+        "& .MuiOutlinedInput-root": { borderRadius: 2 },
+      }}
+    >
+      <MenuItem value="ASC">ASC</MenuItem>
+      <MenuItem value="DESC">DESC</MenuItem>
+    </TextField>
 
-    <Grid item xs={12} md={3}>
-      <TextField
-        size="small"
-        fullWidth
-        label="Page Size"
-        value={pageSize}
-        onChange={e => setPageSize(e.target.value)}
-      />
-    </Grid>
+    <TextField
+      size="small"
+      label="Page Size"
+      value={pageSize}
+      onChange={e => setPageSize(e.target.value)}
+      type="number"
+      sx={{ 
+        minWidth: 100,
+        "& .MuiOutlinedInput-root": { borderRadius: 2 },
+      }}
+    />
 
-    <Grid item xs={12} md={3}>
-      <TextField
-        size="small"
-        fullWidth
-        label="Page Number"
-        value={pageNumber}
-        onChange={e => setPageNumber(e.target.value)}
-      />
-    </Grid>
-  </>
+    <TextField
+      size="small"
+      label="Page"
+      value={pageNumber}
+      onChange={e => setPageNumber(e.target.value)}
+      type="number"
+      sx={{ 
+        minWidth: 80,
+        "& .MuiOutlinedInput-root": { borderRadius: 2 },
+      }}
+    />
+  </Stack>
 );
 
 export default GetOptionsPanel;
