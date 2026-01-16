@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, memo } from 'react';
-import { Paper, Typography, Box, Alert, Stack, FormControlLabel, Switch, IconButton, Tooltip, Snackbar, alpha, useTheme, Chip, Select, MenuItem } from '@mui/material';
+import { Paper, Typography, Box, Alert, Stack, FormControlLabel, Switch, IconButton, Tooltip, Snackbar, alpha, useTheme, Chip, Select, MenuItem, Slider, ToggleButton, ToggleButtonGroup, Divider } from '@mui/material';
 import ReactFlow, { Background, Controls, MiniMap, MarkerType, applyNodeChanges } from 'reactflow';
 import TableNode from './graph/TableNode';
 import CrowsFootEdge from './graph/CrowsFootEdge';
@@ -13,6 +13,13 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import ImageIcon from "@mui/icons-material/Image";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import DrawIcon from "@mui/icons-material/Draw";
+import CreateIcon from "@mui/icons-material/Create";
+import DeleteIcon from "@mui/icons-material/Delete";
+import UndoIcon from "@mui/icons-material/Undo";
+import RedoIcon from "@mui/icons-material/Redo";
+import ClearIcon from "@mui/icons-material/Clear";
+import MouseIcon from "@mui/icons-material/Mouse";
 import { useConnection } from '../../../_shared/database/useConnection';
 
 // Memoize nodeTypes and edgeTypes outside the component to avoid React Flow error 002
@@ -39,6 +46,30 @@ export const RelationshipGraph = () => {
   const [fullscreen, setFullscreen] = useState(false);
   const [pseudoFullscreen, setPseudoFullscreen] = useState(false);
   const [fsAnimating, setFsAnimating] = useState(false);
+
+  // Whiteboard drawing state
+  const [drawingMode, setDrawingMode] = useState(false);
+  const [drawingTool, setDrawingTool] = useState('pen'); // 'pen' | 'eraser' | 'select'
+  const [penColor, setPenColor] = useState('#ef4444');
+  const [penSize, setPenSize] = useState(3);
+  const [paths, setPaths] = useState([]); // Array of drawn paths
+  const [currentPath, setCurrentPath] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const canvasRef = useRef(null);
+  const isDrawing = useRef(false);
+
+  const penColors = [
+    '#ef4444', // red
+    '#f97316', // orange
+    '#eab308', // yellow
+    '#22c55e', // green
+    '#3b82f6', // blue
+    '#8b5cf6', // purple
+    '#ec4899', // pink
+    '#000000', // black
+    '#ffffff', // white
+  ];
 
   // Controls
   const handleFullscreen = async () => {
@@ -103,6 +134,112 @@ export const RelationshipGraph = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [pseudoFullscreen]);
+
+  // Drawing handlers
+  const getCanvasCoords = useCallback((e) => {
+    if (!canvasRef.current) return { x: 0, y: 0 };
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+  }, []);
+
+  const startDrawing = useCallback((e) => {
+    if (!drawingMode || drawingTool === 'select') return;
+    isDrawing.current = true;
+    const coords = getCanvasCoords(e);
+    setCurrentPath({
+      points: [coords],
+      color: drawingTool === 'eraser' ? 'eraser' : penColor,
+      size: drawingTool === 'eraser' ? penSize * 4 : penSize,
+    });
+  }, [drawingMode, drawingTool, penColor, penSize, getCanvasCoords]);
+
+  const draw = useCallback((e) => {
+    if (!isDrawing.current || !currentPath) return;
+    const coords = getCanvasCoords(e);
+    setCurrentPath(prev => ({
+      ...prev,
+      points: [...prev.points, coords],
+    }));
+  }, [currentPath, getCanvasCoords]);
+
+  const stopDrawing = useCallback(() => {
+    if (!isDrawing.current || !currentPath) {
+      isDrawing.current = false;
+      return;
+    }
+    isDrawing.current = false;
+    if (currentPath.points.length > 1) {
+      setUndoStack(prev => [...prev, paths]);
+      setRedoStack([]);
+      setPaths(prev => [...prev, currentPath]);
+    }
+    setCurrentPath(null);
+  }, [currentPath, paths]);
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const prevPaths = undoStack[undoStack.length - 1];
+    setRedoStack(prev => [...prev, paths]);
+    setPaths(prevPaths);
+    setUndoStack(prev => prev.slice(0, -1));
+  }, [undoStack, paths]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const nextPaths = redoStack[redoStack.length - 1];
+    setUndoStack(prev => [...prev, paths]);
+    setPaths(nextPaths);
+    setRedoStack(prev => prev.slice(0, -1));
+  }, [redoStack, paths]);
+
+  const handleClearCanvas = useCallback(() => {
+    if (paths.length === 0) return;
+    setUndoStack(prev => [...prev, paths]);
+    setRedoStack([]);
+    setPaths([]);
+  }, [paths]);
+
+  // Render paths to canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const rect = canvas.parentElement?.getBoundingClientRect();
+    if (rect) {
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw all saved paths
+    [...paths, currentPath].filter(Boolean).forEach(path => {
+      if (path.points.length < 2) return;
+      ctx.beginPath();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      if (path.color === 'eraser') {
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineWidth = path.size;
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = path.color;
+        ctx.lineWidth = path.size;
+      }
+      
+      ctx.moveTo(path.points[0].x, path.points[0].y);
+      for (let i = 1; i < path.points.length; i++) {
+        ctx.lineTo(path.points[i].x, path.points[i].y);
+      }
+      ctx.stroke();
+    });
+  }, [paths, currentPath]);
+
   useEffect(() => {
     const loadSchema = async () => {
       if (!connectionId) return;
@@ -411,6 +548,29 @@ export const RelationshipGraph = () => {
         </Box>
 
         <Stack direction="row" spacing={1} alignItems="center">
+          {/* Drawing Mode Toggle */}
+          <Tooltip title={drawingMode ? 'Exit drawing mode' : 'Enter drawing mode'}>
+            <IconButton 
+              onClick={() => setDrawingMode(!drawingMode)}
+              size="small"
+              sx={{ 
+                bgcolor: drawingMode 
+                  ? (theme) => alpha(theme.palette.warning.main, 0.2)
+                  : 'action.hover',
+                color: drawingMode ? 'warning.main' : 'inherit',
+                '&:hover': { 
+                  bgcolor: drawingMode 
+                    ? (theme) => alpha(theme.palette.warning.main, 0.3)
+                    : 'action.selected' 
+                },
+              }}
+            >
+              <DrawIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+
           {/* Export buttons */}
           <Tooltip title="Copy Mermaid ER">
             <IconButton 
@@ -505,6 +665,151 @@ export const RelationshipGraph = () => {
         </Stack>
       </Paper>
 
+      {/* Drawing Toolbar - Shows when in drawing mode (outside fullscreen) */}
+      {drawingMode && !pseudoFullscreen && !fullscreen && (
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 1.5,
+            mb: 2,
+            borderRadius: 3,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            flexWrap: 'wrap',
+            bgcolor: (theme) => alpha(theme.palette.warning.main, 0.05),
+            borderColor: (theme) => alpha(theme.palette.warning.main, 0.3),
+          }}
+        >
+          {/* Tool Selection */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+              Tool:
+            </Typography>
+            <ToggleButtonGroup
+              value={drawingTool}
+              exclusive
+              onChange={(e, v) => v && setDrawingTool(v)}
+              size="small"
+            >
+              <ToggleButton value="select" sx={{ px: 1.5 }}>
+                <Tooltip title="Select / Pan">
+                  <MouseIcon fontSize="small" />
+                </Tooltip>
+              </ToggleButton>
+              <ToggleButton value="pen" sx={{ px: 1.5 }}>
+                <Tooltip title="Pen">
+                  <CreateIcon fontSize="small" />
+                </Tooltip>
+              </ToggleButton>
+              <ToggleButton value="eraser" sx={{ px: 1.5 }}>
+                <Tooltip title="Eraser">
+                  <DeleteIcon fontSize="small" />
+                </Tooltip>
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+
+          <Divider orientation="vertical" flexItem />
+
+          {/* Color Selection */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+              Color:
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              {penColors.map((color) => (
+                <Tooltip key={color} title={color}>
+                  <Box
+                    onClick={() => setPenColor(color)}
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 1,
+                      bgcolor: color,
+                      border: 2,
+                      borderColor: penColor === color ? 'primary.main' : 'divider',
+                      cursor: 'pointer',
+                      transition: 'transform 0.15s',
+                      '&:hover': { transform: 'scale(1.1)' },
+                    }}
+                  />
+                </Tooltip>
+              ))}
+            </Box>
+          </Box>
+
+          <Divider orientation="vertical" flexItem />
+
+          {/* Pen Size */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 150 }}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+              Size:
+            </Typography>
+            <Slider
+              value={penSize}
+              onChange={(e, v) => setPenSize(v)}
+              min={1}
+              max={20}
+              size="small"
+              sx={{ flex: 1 }}
+            />
+            <Typography variant="caption" sx={{ minWidth: 20, textAlign: 'center' }}>
+              {penSize}
+            </Typography>
+          </Box>
+
+          <Divider orientation="vertical" flexItem />
+
+          {/* Undo/Redo/Clear */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Tooltip title="Undo">
+              <span>
+                <IconButton 
+                  onClick={handleUndo} 
+                  disabled={undoStack.length === 0}
+                  size="small"
+                >
+                  <UndoIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Redo">
+              <span>
+                <IconButton 
+                  onClick={handleRedo} 
+                  disabled={redoStack.length === 0}
+                  size="small"
+                >
+                  <RedoIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Clear All Drawings">
+              <span>
+                <IconButton 
+                  onClick={handleClearCanvas} 
+                  disabled={paths.length === 0}
+                  size="small"
+                  color="error"
+                >
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Box>
+
+          <Box sx={{ flex: 1 }} />
+
+          <Chip 
+            label="Drawing Mode Active" 
+            size="small" 
+            color="warning"
+            sx={{ fontWeight: 600 }}
+          />
+        </Paper>
+      )}
+
       {/* Graph Container */}
       <Paper
         ref={containerRef}
@@ -514,6 +819,7 @@ export const RelationshipGraph = () => {
           borderRadius: 3,
           overflow: 'hidden',
           bgcolor: t.palette.background.paper,
+          position: 'relative',
           transition: 'transform 260ms ease, opacity 200ms ease',
           ...(pseudoFullscreen
             ? {
@@ -537,7 +843,9 @@ export const RelationshipGraph = () => {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          nodesDraggable
+          nodesDraggable={!drawingMode || drawingTool === 'select'}
+          panOnDrag={!drawingMode || drawingTool === 'select'}
+          zoomOnScroll={!drawingMode || drawingTool === 'select'}
           nodesConnectable={false}
           onInit={(instance) => (rfRef.current = instance)}
           onNodesChange={onNodesChange}
@@ -551,6 +859,182 @@ export const RelationshipGraph = () => {
             }}
           />
         </ReactFlow>
+
+        {/* Fullscreen Drawing Toolbar - Floating inside the container */}
+        {drawingMode && (pseudoFullscreen || fullscreen) && (
+          <Paper
+            elevation={8}
+            sx={{
+              position: 'absolute',
+              top: 16,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 20,
+              p: 1.5,
+              borderRadius: 3,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              flexWrap: 'wrap',
+              bgcolor: (theme) => alpha(theme.palette.background.paper, 0.95),
+              backdropFilter: 'blur(8px)',
+              border: (theme) => `1px solid ${alpha(theme.palette.warning.main, 0.3)}`,
+              maxWidth: 'calc(100% - 32px)',
+            }}
+          >
+            {/* Tool Selection */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <ToggleButtonGroup
+                value={drawingTool}
+                exclusive
+                onChange={(e, v) => v && setDrawingTool(v)}
+                size="small"
+              >
+                <ToggleButton value="select" sx={{ px: 1.5 }}>
+                  <Tooltip title="Select / Pan">
+                    <MouseIcon fontSize="small" />
+                  </Tooltip>
+                </ToggleButton>
+                <ToggleButton value="pen" sx={{ px: 1.5 }}>
+                  <Tooltip title="Pen">
+                    <CreateIcon fontSize="small" />
+                  </Tooltip>
+                </ToggleButton>
+                <ToggleButton value="eraser" sx={{ px: 1.5 }}>
+                  <Tooltip title="Eraser">
+                    <DeleteIcon fontSize="small" />
+                  </Tooltip>
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
+
+            <Divider orientation="vertical" flexItem />
+
+            {/* Color Selection */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              {['#ff5722', '#4caf50', '#2196f3', '#9c27b0', '#f44336', '#ffffff', '#000000'].map(color => (
+                <IconButton
+                  key={color}
+                  size="small"
+                  onClick={() => setPenColor(color)}
+                  sx={{
+                    width: 24,
+                    height: 24,
+                    bgcolor: color,
+                    border: penColor === color ? '2px solid' : '1px solid',
+                    borderColor: penColor === color ? 'warning.main' : 'divider',
+                    '&:hover': { bgcolor: color, opacity: 0.8 },
+                  }}
+                />
+              ))}
+            </Box>
+
+            <Divider orientation="vertical" flexItem />
+
+            {/* Pen Size */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 120 }}>
+              <CreateIcon fontSize="small" color="action" />
+              <Slider
+                value={penSize}
+                onChange={(e, v) => setPenSize(v)}
+                min={1}
+                max={20}
+                size="small"
+                sx={{ flex: 1 }}
+              />
+              <Typography variant="caption" sx={{ minWidth: 20, textAlign: 'center' }}>
+                {penSize}
+              </Typography>
+            </Box>
+
+            <Divider orientation="vertical" flexItem />
+
+            {/* Undo/Redo/Clear */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Tooltip title="Undo">
+                <span>
+                  <IconButton 
+                    onClick={handleUndo} 
+                    disabled={undoStack.length === 0}
+                    size="small"
+                  >
+                    <UndoIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="Redo">
+                <span>
+                  <IconButton 
+                    onClick={handleRedo} 
+                    disabled={redoStack.length === 0}
+                    size="small"
+                  >
+                    <RedoIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="Clear All">
+                <span>
+                  <IconButton 
+                    onClick={handleClearCanvas} 
+                    disabled={paths.length === 0}
+                    size="small"
+                    color="error"
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
+
+            <Divider orientation="vertical" flexItem />
+
+            {/* Exit Fullscreen */}
+            <Tooltip title="Exit Fullscreen">
+              <IconButton 
+                onClick={() => {
+                  if (fullscreen && document.exitFullscreen) {
+                    document.exitFullscreen();
+                  } else {
+                    setPseudoFullscreen(false);
+                  }
+                }}
+                size="small"
+                color="warning"
+              >
+                <FullscreenExitIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Paper>
+        )}
+
+        {/* Drawing Canvas Overlay */}
+        {drawingMode && (
+          <canvas
+            ref={canvasRef}
+            onMouseDown={startDrawing}
+            onMouseMove={draw}
+            onMouseUp={stopDrawing}
+            onMouseLeave={stopDrawing}
+            onTouchStart={startDrawing}
+            onTouchMove={draw}
+            onTouchEnd={stopDrawing}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              cursor: drawingTool === 'pen' 
+                ? 'crosshair' 
+                : drawingTool === 'eraser' 
+                  ? 'cell' 
+                  : 'default',
+              pointerEvents: drawingTool === 'select' ? 'none' : 'auto',
+              zIndex: 10,
+            }}
+          />
+        )}
       </Paper>
 
       <Snackbar
@@ -563,4 +1047,3 @@ export const RelationshipGraph = () => {
     </Box>
   );
 };
-
