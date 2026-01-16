@@ -325,14 +325,31 @@ export function renderColumnControl({
 
   // Date / datetime
   if (["date", "timestamp", "datetime"].some((t) => type.includes(t))) {
-    // let caller decide between date-only or datetime-local if needed
+    // Format value for datetime-local input (requires YYYY-MM-DDTHH:mm format)
+    let formattedValue = value ?? "";
+    if (formattedValue) {
+      try {
+        const date = new Date(formattedValue);
+        if (!isNaN(date.getTime())) {
+          // Format to YYYY-MM-DDTHH:mm (datetime-local format)
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          formattedValue = `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+      } catch {
+        // Keep original value if parsing fails
+      }
+    }
     return (
       <TextField
         fullWidth={fullWidth}
         size={size}
         type="datetime-local"
         label={col.name}
-        value={value ?? ""}
+        value={formattedValue}
         onChange={(e) => onChange && onChange(e.target.value)}
         InputLabelProps={{ shrink: true }}
         disabled={disabled}

@@ -268,7 +268,7 @@ const APITester = ({
   }, [schema, selectedTable, connectionId]);
 
   const handleSend = async () => {
-    if (!selectedTable) {
+    if (!selectedTable && !endpoint?.graph) {
       setError("Please select a table");
       return;
     }
@@ -276,83 +276,118 @@ const APITester = ({
     setLoading(true);
     setError(null);
     setResponse(null);
-    const pathParamNames = [];
-    let url = `/${connectionId}/${selectedTable}`;
+    
     try {
-      // Build body from bodyFields for POST/PUT
-      let parsedBody = null;
-      if (operation === "POST") {
-        parsedBody = buildPostPayload();
-      } else if (operation === "PUT") {
-        // For PUT, build payload with update fields and where conditions
-        const updateFields = buildPayloadFromBodyFields();
-        // Build where conditions from filters
-        const where = {};
+      const startTime = Date.now();
+      let result;
+
+      // If endpoint has a graph (custom saved endpoint), use preview endpoint
+      if (endpoint?.graph) {
+        // Build limit from pagination settings
+        const ps = pageSize ? Number(pageSize) : 100;
+        const pn = pageNumber ? Number(pageNumber) : 1;
+        const offset = (Math.max(pn, 1) - 1) * ps;
+        
+        // Build additional filters from user input
+        // For saved endpoints, use the source table as the filter table
+        const sourceTable = endpoint.graph?.source?.table || selectedTable;
+        const additionalFilters = [];
         Object.entries(filters || {}).forEach(([k, v]) => {
           if (v?.val !== "" && v?.val !== undefined) {
-            where[k] = { op: v.op || "eq", val: v.val };
+            additionalFilters.push({
+              field: `${sourceTable}.${k}`,
+              table: sourceTable,
+              op: v.op || "eq",
+              value: v.val,
+            });
           }
         });
-        parsedBody = { data: updateFields, where };
-      }
-
-      if (operation === "GET" || operation === "DELETE") {
-        const params = new URLSearchParams();
-        // add filters (with operators) but exclude any that were used as path params
-        Object.entries(filters || {}).forEach(([k, v]) => {
-          if (pathParamNames.includes(k)) return; // skip path params
-          const op = v?.op || "eq";
-          const val = v?.val;
-          if (val === undefined || val === "") return;
-          const paramName = op === "eq" ? k : `${k}__${op}`;
-          params.append(paramName, val);
+        
+        result = await api.post(`/connections/${connectionId}/preview`, {
+          graph: endpoint.graph,
+          limit: ps,
+          offset: offset,
+          orderBy: orderBy || undefined,
+          orderDir: orderDir || 'ASC',
+          additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
         });
-        if (operation === "GET") {
-          if (orderBy) params.append("orderBy", orderBy);
-          if (orderDir) params.append("orderDir", orderDir);
-          const ps = pageSize ? Number(pageSize) : null;
-          const pn = pageNumber ? Number(pageNumber) : 1;
-          if (ps) {
-            params.append("limit", String(ps));
-            const off = (Math.max(pn, 1) - 1) * ps;
-            params.append("offset", String(off));
+      } else {
+        // Standard table CRUD - original logic
+        const pathParamNames = [];
+        let url = `/${connectionId}/${selectedTable}`;
+        
+        // Build body from bodyFields for POST/PUT
+        let parsedBody = null;
+        if (operation === "POST") {
+          parsedBody = buildPostPayload();
+        } else if (operation === "PUT") {
+          // For PUT, build payload with update fields and where conditions
+          const updateFields = buildPayloadFromBodyFields();
+          // Build where conditions from filters
+          const where = {};
+          Object.entries(filters || {}).forEach(([k, v]) => {
+            if (v?.val !== "" && v?.val !== undefined) {
+              where[k] = { op: v.op || "eq", val: v.val };
+            }
+          });
+          parsedBody = { data: updateFields, where };
+        }
+
+        if (operation === "GET" || operation === "DELETE") {
+          const params = new URLSearchParams();
+          // add filters (with operators) but exclude any that were used as path params
+          Object.entries(filters || {}).forEach(([k, v]) => {
+            if (pathParamNames.includes(k)) return; // skip path params
+            const op = v?.op || "eq";
+            const val = v?.val;
+            if (val === undefined || val === "") return;
+            const paramName = op === "eq" ? k : `${k}__${op}`;
+            params.append(paramName, val);
+          });
+          if (operation === "GET") {
+            if (orderBy) params.append("orderBy", orderBy);
+            if (orderDir) params.append("orderDir", orderDir);
+            const ps = pageSize ? Number(pageSize) : null;
+            const pn = pageNumber ? Number(pageNumber) : 1;
+            if (ps) {
+              params.append("limit", String(ps));
+              const off = (Math.max(pn, 1) - 1) * ps;
+              params.append("offset", String(off));
+            }
+          }
+          const qs = params.toString();
+          if (qs) url += `?${qs}`;
+
+          if (operation === "DELETE") {
+            const hasQueryFilters = !!qs;
+            const hasPathParams = pathParamNames && pathParamNames.length > 0;
+            if (!hasQueryFilters && !hasPathParams) {
+              setError(
+                'DELETE requires at least one filter or a path parameter to avoid accidental full-table deletes. Expand "Additional filters" and add a filter.'
+              );
+              setLoading(false);
+              return;
+            }
           }
         }
-        const qs = params.toString();
-        if (qs) url += `?${qs}`;
 
-        if (operation === "DELETE") {
-          const hasQueryFilters = !!qs;
-          const hasPathParams = pathParamNames && pathParamNames.length > 0;
-          if (!hasQueryFilters && !hasPathParams) {
-            setError(
-              'DELETE requires at least one filter or a path parameter to avoid accidental full-table deletes. Expand "Additional filters" and add a filter.'
-            );
-            setLoading(false);
-            return;
+        switch (operation) {
+          case "GET":
+            result = await api.get(url);
+            break;
+          case "POST":
+            result = await api.post(url, parsedBody);
+            break;
+          case "PUT": {
+            result = await api.put(url, parsedBody);
+            break;
           }
+          case "DELETE":
+            result = await api.delete(url);
+            break;
+          default:
+            throw new Error("Invalid operation");
         }
-      }
-
-      let result;
-      const startTime = Date.now();
-
-      switch (operation) {
-        case "GET":
-          result = await api.get(url);
-          break;
-        case "POST":
-          result = await api.post(url, parsedBody);
-          break;
-        case "PUT": {
-          result = await api.put(url, parsedBody);
-          break;
-        }
-        case "DELETE":
-          result = await api.delete(url);
-          break;
-        default:
-          throw new Error("Invalid operation");
       }
 
       const endTime = Date.now();

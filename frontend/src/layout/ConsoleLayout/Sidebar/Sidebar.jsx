@@ -36,12 +36,14 @@ export const Sidebar = () => {
         type: null,
         target: null,
     });
+    const [reconnecting, setReconnecting] = useState(false);
     const {
         currentConnection,
         selectConnection,
         saveCurrentConnection,
         deleteConnection: deleteStored,
-        closeConnection
+        closeConnection,
+        updateSchema
     } = useConnection();
     const connections = loadConnections();
 
@@ -51,6 +53,78 @@ export const Sidebar = () => {
         window.addEventListener(LISTENERS.OPEN_ADD_CONNECTION, handleOpenForm);
         return () => window.removeEventListener(LISTENERS.OPEN_ADD_CONNECTION, handleOpenForm);
     }, []);
+
+    // Auto-introspect on browser refresh if there's a saved connection
+    // Uses sessionStorage to ensure this only runs once per browser session (not on app switch)
+    useEffect(() => {
+        const sessionKey = 'schema_introspected';
+        const alreadyIntrospected = sessionStorage.getItem(sessionKey);
+        
+        if (currentConnection && !reconnecting && !alreadyIntrospected) {
+            // Mark as introspected for this session
+            sessionStorage.setItem(sessionKey, 'true');
+            
+            // Trigger introspection to refresh schema on page load
+            (async () => {
+                setReconnecting(true);
+                try {
+                    const { introspectConnection, getSchema } = await import('../../../services/api');
+                    await introspectConnection(currentConnection.id, {
+                        host: currentConnection.host,
+                        port: parseInt(currentConnection.port, 10),
+                        database: currentConnection.database,
+                        user: currentConnection.user,
+                        password: currentConnection.password,
+                        type: currentConnection.type,
+                        uri: currentConnection.uri,
+                        encrypt: currentConnection.encrypt,
+                    });
+                    const schemaData = await getSchema(currentConnection.id);
+                    updateSchema(schemaData);
+                } catch (err) {
+                    console.error('Failed to auto-introspect on refresh:', err);
+                } finally {
+                    setReconnecting(false);
+                }
+            })();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentConnection?.id]); // Run when connection is loaded
+
+    // Handle reconnecting to a saved connection with introspection
+    const handleSelectConnection = async (connection) => {
+        selectConnection(connection);
+        // Auto-introspect to load schema after server restart
+        setReconnecting(true);
+        try {
+            const { introspectConnection, getSchema } = await import('../../../services/api');
+            await introspectConnection(connection.id, {
+                host: connection.host,
+                port: parseInt(connection.port, 10),
+                database: connection.database,
+                user: connection.user,
+                password: connection.password,
+                type: connection.type,
+                uri: connection.uri,
+                encrypt: connection.encrypt,
+            });
+            // Load schema to populate the context
+            const schemaData = await getSchema(connection.id);
+            updateSchema(schemaData);
+        } catch (err) {
+            // If introspection fails, still keep the connection selected
+            // but schema will be null
+            console.error('Failed to reconnect:', err);
+            window.dispatchEvent(new CustomEvent('toast', { 
+                detail: { 
+                    message: `Failed to reconnect: ${err.response?.data?.error || err.message}`, 
+                    severity: 'error' 
+                } 
+            }));
+        } finally {
+            setReconnecting(false);
+        }
+    };
 
     const getDbTypeColor = (type) => {
         if (type === 'mysql') return '#00758F';
@@ -139,7 +213,7 @@ export const Sidebar = () => {
                         return (
                             <ListItem
                                 key={c.id}
-                                onClick={() => selectConnection(c)}
+                                onClick={() => handleSelectConnection(c)}
                                 secondaryAction={
                                     isActive && (
                                         <Box sx={{ display: "flex", gap: 0.5 }}>
@@ -220,11 +294,27 @@ export const Sidebar = () => {
                                             >
                                                 {c.name || c.database || "Connection"}
                                             </Typography>
-                                            {isActive && (
+                                            {isActive && reconnecting ? (
+                                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                                    <Box 
+                                                        component="span"
+                                                        sx={{ 
+                                                            width: 6, 
+                                                            height: 6,
+                                                            borderRadius: "50%",
+                                                            bgcolor: "info.main",
+                                                            animation: "pulse 1.5s ease-in-out infinite"
+                                                        }}
+                                                    />
+                                                    <Typography variant="caption" color="info.main" fontWeight={600}>
+                                                        Connecting
+                                                    </Typography>
+                                                </Box>
+                                            ) : isActive ? (
                                                 <CheckCircleIcon 
                                                     sx={{ fontSize: 14, color: "success.main" }} 
                                                 />
-                                            )}
+                                            ) : null}
                                         </Box>
                                     }
                                     secondary={

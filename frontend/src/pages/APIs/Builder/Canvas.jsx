@@ -393,11 +393,11 @@ const Canvas = ({
                     })}
                   </select>
                   <select value={havingDraft.op || '>='} onChange={(e) => setHavingDraft((d) => ({ ...d, op: e.target.value }))} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #555', background: '#1e1e1e', color: 'inherit' }}>
-                    <option value=">=" style={{ background: '#1e1e1e', color: '#fff' }}>&geq;</option>
+                    <option value=">=" style={{ background: '#1e1e1e', color: '#fff' }}>&gt;=</option>
                     <option value=">" style={{ background: '#1e1e1e', color: '#fff' }}>&gt;</option>
                     <option value="=" style={{ background: '#1e1e1e', color: '#fff' }}>=</option>
                     <option value="<" style={{ background: '#1e1e1e', color: '#fff' }}>&lt;</option>
-                    <option value="<=" style={{ background: '#1e1e1e', color: '#fff' }}>&leq;</option>
+                    <option value="<=" style={{ background: '#1e1e1e', color: '#fff' }}>&lt;=</option>
                   </select>
                   <TextField 
                     size="small" 

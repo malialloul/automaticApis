@@ -34,6 +34,10 @@ const createAppTheme = (darkMode = false) =>
                     '*::-webkit-scrollbar-track': { background: darkMode ? '#1E293B' : '#FFFFFF', borderRadius: 8 },
                     '*::-webkit-scrollbar-thumb': { backgroundColor: darkMode ? '#475569' : '#94A3B8', borderRadius: 8, border: `2px solid ${darkMode ? '#1E293B' : '#FFFFFF'}` },
                     '*::-webkit-scrollbar-thumb:hover': { backgroundColor: '#64748B' },
+                    '@keyframes pulse': {
+                        '0%, 100%': { opacity: 1 },
+                        '50%': { opacity: 0.5 },
+                    },
                 },
             },
             MuiTableContainer: {
