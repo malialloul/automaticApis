@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { Box, Grid, Paper, Button, Typography, Divider, TextField, Snackbar, IconButton, alpha, useTheme, Dialog, DialogContent, DialogActions, Tooltip, Collapse } from '@mui/material';
 import BuildIcon from '@mui/icons-material/Build';
 import SaveIcon from '@mui/icons-material/Save';
@@ -11,9 +11,9 @@ import Canvas from './Canvas';
 import PreviewPanel from './PreviewPanel';
 import { AppContext } from '../../../App';
 import { useConnection } from '../../../_shared/database/useConnection';
-import { createEndpoint } from '../../../services/api';
+import { createEndpoint, updateEndpoint } from '../../../services/api';
 
-const Builder = ({ onClose }) => {
+const Builder = ({ onClose, editingEndpoint }) => {
   const { schema } = useContext(AppContext);
   const { currentConnection } = useConnection();
   const connectionId = currentConnection?.id;
@@ -207,9 +207,96 @@ const Builder = ({ onClose }) => {
 
   const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
+  // Load editing endpoint data on mount
+  useEffect(() => {
+    if (!editingEndpoint) return;
+    
+    const graph = editingEndpoint.graph || editingEndpoint;
+    
+    // Load tables
+    const loadedTables = [];
+    if (graph.source?.table) {
+      loadedTables.push(graph.source.table);
+    }
+    
+    // Extract tables from joins
+    (graph.joins || []).forEach(j => {
+      const fromTable = j.from?.table || j.fromTable || j.from;
+      const toTable = j.to?.table || j.toTable || j.to;
+      if (fromTable && !loadedTables.includes(fromTable)) loadedTables.push(fromTable);
+      if (toTable && !loadedTables.includes(toTable)) loadedTables.push(toTable);
+    });
+    
+    setTables(loadedTables);
+    
+    // Load output fields
+    if (graph.outputFields) {
+      setOutputFields(graph.outputFields);
+    }
+    
+    // Load joins
+    const loadedJoins = (graph.joins || []).map(j => ({
+      fromTable: j.from?.table || j.fromTable || j.from,
+      toTable: j.to?.table || j.toTable || j.to,
+      fromColumn: j.from?.field || j.fromColumn || j.from_col,
+      toColumn: j.to?.field || j.toColumn || j.to_col,
+      type: j.type || 'LEFT',
+    }));
+    setJoins(loadedJoins);
+    
+    // Load filters
+    const loadedFilters = (graph.filters || []).map(f => ({
+      id: uid(),
+      table: f.table || (f.field?.includes('.') ? f.field.split('.')[0] : graph.source?.table),
+      field: f.field?.includes('.') ? f.field.split('.')[1] : f.field,
+      op: f.op || 'eq',
+      value: f.value || '',
+    }));
+    setFilters(loadedFilters);
+    
+    // Load groupBy
+    const loadedGroupBy = (graph.groupBy || []).map(g => {
+      if (typeof g === 'string' && g.includes('.')) {
+        const [table, field] = g.split('.');
+        return { table, field };
+      }
+      return g;
+    });
+    setGroupBy(loadedGroupBy);
+    
+    // Load aggregations
+    const loadedAggregates = (graph.aggregations || []).map(a => ({
+      id: uid(),
+      table: a.table || (a.field?.includes('.') ? a.field.split('.')[0] : graph.source?.table),
+      field: a.field?.includes('.') ? a.field.split('.')[1] : a.field,
+      func: a.type || a.func || 'COUNT',
+      alias: a.as || a.alias || '',
+    }));
+    setAggregates(loadedAggregates);
+    
+    // Load having
+    const loadedHaving = (graph.having || []).map(h => ({
+      id: uid(),
+      aggField: h.aggField || '',
+      op: h.op || '>=',
+      value: h.value || '',
+    }));
+    setHaving(loadedHaving);
+    
+    // Set name and slug for save dialog
+    setEndpointName(editingEndpoint.name || '');
+    setEndpointSlug(editingEndpoint.slug || '');
+  }, [editingEndpoint]);
+
   const openSave = () => {
-    setEndpointName('');
-    setEndpointSlug('');
+    if (editingEndpoint) {
+      // When editing, pre-fill with existing values
+      setEndpointName(editingEndpoint.name || '');
+      setEndpointSlug(editingEndpoint.slug || '');
+    } else {
+      setEndpointName('');
+      setEndpointSlug('');
+    }
     setSaveOpen(true);
   };
 
@@ -354,17 +441,28 @@ const Builder = ({ onClose }) => {
       groupBy: payload.groupBy,
       aggregations: payload.aggregations,
       having: payload.having,
+      outputFields: outputFields, // Include for editing
     };
     
     // Include connectionId so we can filter endpoints by connection
     payload.connectionId = connectionId;
 
     try {
-      const res = await createEndpoint(payload);
-      setSaveOpen(false);
-      // Close the panel and notify parent with success info
-      if (onClose) {
-        onClose({ success: true, slug: res.slug, message: `API saved! Endpoint: /api/${res.slug}` });
+      let res;
+      if (editingEndpoint) {
+        // Update existing endpoint
+        res = await updateEndpoint(editingEndpoint.slug, payload);
+        setSaveOpen(false);
+        if (onClose) {
+          onClose({ success: true, slug: res.slug, message: `API updated! Endpoint: /api/${res.slug}`, updated: true });
+        }
+      } else {
+        // Create new endpoint
+        res = await createEndpoint(payload);
+        setSaveOpen(false);
+        if (onClose) {
+          onClose({ success: true, slug: res.slug, message: `API saved! Endpoint: /api/${res.slug}` });
+        }
       }
       try { await navigator.clipboard.writeText(`/api/${res.slug}`); } catch (e) {}
     } catch (err) {
@@ -394,9 +492,13 @@ const Builder = ({ onClose }) => {
               <BuildIcon sx={{ color: 'white', fontSize: 24 }} />
             </Box>
             <Box>
-              <Typography variant="h5" fontWeight={700}>API Builder</Typography>
+              <Typography variant="h5" fontWeight={700}>
+                {editingEndpoint ? 'Edit API Endpoint' : 'API Builder'}
+              </Typography>
               <Typography variant="body2" color="text.secondary">
-                Create custom endpoints with visual query builder
+                {editingEndpoint 
+                  ? `Editing: ${editingEndpoint.name || editingEndpoint.slug}`
+                  : 'Create custom endpoints with visual query builder'}
               </Typography>
             </Box>
           </Box>
@@ -418,7 +520,7 @@ const Builder = ({ onClose }) => {
                   disabled={tables.length === 0 || !Object.values(outputFields).some(f => f && f.length > 0)}
                   sx={{ borderRadius: 2, textTransform: 'none', px: 2.5 }}
                 >
-                  Save Endpoint
+                  {editingEndpoint ? 'Update Endpoint' : 'Save Endpoint'}
                 </Button>
               </span>
             </Tooltip>
@@ -613,9 +715,11 @@ const Builder = ({ onClose }) => {
               <SaveIcon sx={{ color: 'white', fontSize: 22 }} />
             </Box>
             <Box>
-              <Typography variant="h6" fontWeight={700}>Save Endpoint</Typography>
+              <Typography variant="h6" fontWeight={700}>
+                {editingEndpoint ? 'Update Endpoint' : 'Save Endpoint'}
+              </Typography>
               <Typography variant="caption" color="text.secondary">
-                Create a reusable API endpoint
+                {editingEndpoint ? 'Update your API endpoint' : 'Create a reusable API endpoint'}
               </Typography>
             </Box>
           </Box>
@@ -642,6 +746,8 @@ const Builder = ({ onClose }) => {
             value={endpointSlug} 
             onChange={(e) => setEndpointSlug(e.target.value)} 
             placeholder="Auto generated if empty"
+            disabled={!!editingEndpoint} // Disable slug editing when updating
+            helperText={editingEndpoint ? "Slug cannot be changed" : undefined}
             sx={{ 
               "& .MuiOutlinedInput-root": { borderRadius: 2 },
             }} 
@@ -660,7 +766,7 @@ const Builder = ({ onClose }) => {
             startIcon={<SaveIcon />}
             sx={{ borderRadius: 2, textTransform: 'none' }}
           >
-            Save Endpoint
+            {editingEndpoint ? 'Update Endpoint' : 'Save Endpoint'}
           </Button>
         </DialogActions>
       </Dialog>

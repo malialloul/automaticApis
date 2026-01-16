@@ -38,7 +38,9 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import TableChartIcon from "@mui/icons-material/TableChart";
 import BookmarkIcon from "@mui/icons-material/Bookmark";
 import CloseIcon from "@mui/icons-material/Close";
-import { listEndpoints, previewGraph } from "../../services/api";
+import EditIcon from "@mui/icons-material/Edit";
+import DeleteIcon from "@mui/icons-material/Delete";
+import { listEndpoints, previewGraph, deleteEndpoint } from "../../services/api";
 import { AppContext } from "../../App";
 import { useGetRemoteEndpoints } from "../../_shared/database/useGetRemoteEndpoints";
 
@@ -52,7 +54,7 @@ const getMethodColor = (method) => {
   return colors[method] || "default";
 };
 
-const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, onTryIt, onGetCode }, ref) {
+const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, onTryIt, onGetCode, onEditEndpoint }, ref) {
   const theme = useTheme();
   const { data: remoteEndpoints, loading: remoteEndpointsLoading } = useGetRemoteEndpoints({ connectionId });
   
@@ -68,6 +70,7 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
   const [savedPreviewOpen, setSavedPreviewOpen] = useState(false);
   const [savedPreviewError, setSavedPreviewError] = useState(null);
   const [showRawSql, setShowRawSql] = useState(true);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // endpoint to delete
   const baseUrl = window.location.origin;
 
   // Expose refresh method to parent via ref
@@ -106,6 +109,18 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
   // Placeholder for code and try-it
   const handleTryIt = (endpoint) => alert("Try it panel coming soon!");
   const handleGetCode = (endpoint) => alert("Code modal coming soon!");
+
+  // Delete endpoint handler
+  const handleDeleteEndpoint = async (endpoint) => {
+    try {
+      await deleteEndpoint(endpoint.slug);
+      setSavedEndpoints((prev) => prev.filter((ep) => ep.slug !== endpoint.slug));
+      setDeleteConfirm(null);
+    } catch (err) {
+      console.error('Error deleting endpoint:', err);
+      alert('Failed to delete endpoint: ' + (err.message || 'Unknown error'));
+    }
+  };
 
   // Load saved endpoints
   useEffect(() => {
@@ -255,6 +270,30 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
                       {ep.path || `/${ep.slug}`}
                     </Typography>
                   </Box>
+                  <Tooltip title="Edit endpoint">
+                    <IconButton 
+                      size="small" 
+                      onClick={() => onEditEndpoint && onEditEndpoint(ep)}
+                      sx={{ 
+                        bgcolor: alpha(theme.palette.warning.main, 0.1),
+                        "&:hover": { bgcolor: alpha(theme.palette.warning.main, 0.2) },
+                      }}
+                    >
+                      <EditIcon fontSize="small" sx={{ color: "warning.main" }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Delete endpoint">
+                    <IconButton 
+                      size="small" 
+                      onClick={() => setDeleteConfirm(ep)}
+                      sx={{ 
+                        bgcolor: alpha(theme.palette.error.main, 0.1),
+                        "&:hover": { bgcolor: alpha(theme.palette.error.main, 0.2) },
+                      }}
+                    >
+                      <DeleteIcon fontSize="small" sx={{ color: "error.main" }} />
+                    </IconButton>
+                  </Tooltip>
                   <Tooltip title="Show SQL">
                     <IconButton 
                       size="small" 
@@ -720,6 +759,41 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
           )}
         </Box>
       </Drawer>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog 
+        open={!!deleteConfirm} 
+        onClose={() => setDeleteConfirm(null)}
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <Box sx={{ p: 2.5, borderBottom: 1, borderColor: "divider" }}>
+          <Typography variant="h6" fontWeight={700}>Delete Endpoint</Typography>
+        </Box>
+        <DialogContent sx={{ pt: 2.5 }}>
+          <Typography>
+            Are you sure you want to delete <strong>{deleteConfirm?.name}</strong>?
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5, borderTop: 1, borderColor: "divider" }}>
+          <Button 
+            onClick={() => setDeleteConfirm(null)}
+            sx={{ borderRadius: 2, textTransform: "none" }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            variant="contained" 
+            color="error"
+            onClick={() => handleDeleteEndpoint(deleteConfirm)}
+            sx={{ borderRadius: 2, textTransform: "none" }}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 });
