@@ -120,8 +120,11 @@ class SchemaInspector {
       // Find enum columns
       const enumCols = result.rows.filter(col => col.data_type === 'USER-DEFINED');
       let enumOptionsMap = {};
+      let enumTypeMap = {};
       if (enumCols.length > 0) {
         for (const col of enumCols) {
+          // Store the enum type name
+          enumTypeMap[col.column_name] = col.udt_name;
           // Get enum values for this type
           const enumRes = await this.pool.query(
             `SELECT enumlabel FROM pg_enum WHERE enumtypid = (
@@ -160,6 +163,7 @@ class SchemaInspector {
         precision: col.numeric_precision,
         scale: col.numeric_scale,
         enumOptions: enumOptionsMap[col.column_name] || undefined,
+        udtName: enumTypeMap[col.column_name] || (col.data_type === 'USER-DEFINED' ? col.udt_name : undefined),
         isAutoIncrement: autoIncCols.has(col.column_name),
       }));
     } else if (this.dialect === 'oracle') {

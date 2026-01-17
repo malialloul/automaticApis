@@ -6,6 +6,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import FunctionsIcon from '@mui/icons-material/Functions';
 import TableChartIcon from '@mui/icons-material/TableChart';
+import LockIcon from '@mui/icons-material/Lock';
 
 // Validate SQL identifier: must start with letter/underscore, contain only alphanumeric/_
 const isValidSQLIdentifier = (str) => {
@@ -53,6 +54,8 @@ const Canvas = ({
   setOpenHavingFor,
   havingDraft,
   setHavingDraft,
+  endpointMethod = 'GET',
+  requiredFields = {},
 }) => {
   const theme = useTheme();
   const ops = [
@@ -97,7 +100,13 @@ const Canvas = ({
           </Typography>
         </Box>
       )}
-      {tables.map((t) => (
+      {tables.map((t) => {
+        // For PUT method, only show column selection for source table
+        // But allow joined tables to exist for filtering purposes
+        const isSourceTable = t === tables[0];
+        const hideColumnSelection = endpointMethod === 'PUT' && !isSourceTable;
+        
+        return (
         <Paper key={t} variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -423,31 +432,58 @@ const Canvas = ({
           )}
 
           <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center' }}>
-            <Tooltip title="Select all columns from this table.">
-              <Button size="small" variant="outlined" onClick={() => onSelectAllFields(t)} sx={{ borderRadius: 2, textTransform: 'none' }}>
-                Select All
-              </Button>
-            </Tooltip>
+            {hideColumnSelection ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                For PUT: columns from joined tables are for filtering only, not updates
+              </Typography>
+            ) : (
+              <Tooltip title="Select all columns from this table.">
+                <Button size="small" variant="outlined" onClick={() => onSelectAllFields(t)} sx={{ borderRadius: 2, textTransform: 'none' }}>
+                  Select All
+                </Button>
+              </Tooltip>
+            )}
           </Box>
 
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {((schema[t]?.columns) || []).slice(0, 50).map((c) => {
-              const selected = (outputFields[t] || []).includes(c.name);
-              return (
-                <Tooltip key={c.name} title="Click to select/deselect this column.">
-                  <Chip
-                    label={c.name}
-                    color={selected ? 'primary' : 'default'}
-                    onClick={() => onToggleField(t, c.name)}
-                    sx={{ borderRadius: 2, height: 28, fontSize: '0.8rem' }}
-                  />
-                </Tooltip>
-              );
-            })}
-            {((schema[t]?.columns) || []).length > 50 && <Typography variant="caption" color="text.secondary">...more fields</Typography>}
-          </Box>
+          {!hideColumnSelection && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {((schema[t]?.columns) || []).slice(0, 50).map((c) => {
+                const selected = (outputFields[t] || []).includes(c.name);
+                const isRequired = (requiredFields[t] || []).includes(c.name);
+                const tooltipText = isRequired && endpointMethod === 'POST'
+                  ? `Required field for POST - cannot be deselected`
+                  : 'Click to select/deselect this column.';
+                return (
+                  <Tooltip key={c.name} title={tooltipText}>
+                    <Chip
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          {isRequired && endpointMethod === 'POST' && <LockIcon sx={{ fontSize: 12 }} />}
+                          {c.name}
+                        </Box>
+                      }
+                      color={selected ? 'primary' : 'default'}
+                      onClick={() => onToggleField(t, c.name)}
+                      sx={{ 
+                        borderRadius: 2, 
+                        height: 28, 
+                        fontSize: '0.8rem',
+                        ...(isRequired && endpointMethod === 'POST' && {
+                          borderColor: 'warning.main',
+                          borderWidth: 2,
+                          borderStyle: 'solid',
+                        }),
+                      }}
+                    />
+                  </Tooltip>
+                );
+              })}
+              {((schema[t]?.columns) || []).length > 50 && <Typography variant="caption" color="text.secondary">...more fields</Typography>}
+            </Box>
+          )}
         </Paper>
-      ))}
+        );
+      })}
     </Box>
   );
 };

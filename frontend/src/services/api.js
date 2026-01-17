@@ -72,6 +72,18 @@ export const previewGraph = async (connectionId, graph, limit = 5) => {
   return response.data;
 };
 
+// Preview SQL for write operations (INSERT/UPDATE/DELETE)
+export const previewExecuteSql = async (connectionId, operation, graph) => {
+  const response = await api.post(`/connections/${connectionId}/execute`, { 
+    operation, 
+    graph, 
+    previewOnly: true,
+    // Provide dummy data for INSERT/UPDATE preview
+    data: operation === 'INSERT' || operation === 'UPDATE' ? { _preview: true } : undefined,
+  });
+  return response.data;
+};
+
 export const getConnections = async () => {
   const response = await api.get('/connections');
   return response.data;
