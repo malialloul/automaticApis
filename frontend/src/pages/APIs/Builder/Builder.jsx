@@ -1,5 +1,5 @@
 import React, { useState, useContext, useEffect } from 'react';
-import { Box, Grid, Paper, Button, Typography, Divider, TextField, Snackbar, IconButton, alpha, useTheme, Dialog, DialogContent, DialogActions, Tooltip, Collapse } from '@mui/material';
+import { Box, Grid, Paper, Button, Typography, Divider, TextField, Snackbar, Alert, IconButton, alpha, useTheme, Dialog, DialogContent, DialogActions, Tooltip, Collapse, MenuItem, Chip } from '@mui/material';
 import BuildIcon from '@mui/icons-material/Build';
 import SaveIcon from '@mui/icons-material/Save';
 import CloseIcon from '@mui/icons-material/Close';
@@ -174,6 +174,13 @@ const Builder = ({ onClose, editingEndpoint }) => {
 
   const toggleField = (tableName, fieldName) => {
     const isAdding = !(outputFields[tableName] || []).includes(fieldName);
+    
+    // Prevent deselecting required fields when method is POST
+    if (!isAdding && endpointMethod === 'POST' && isRequiredField(tableName, fieldName)) {
+      setSnack({ msg: `Cannot deselect "${fieldName}" - it's a required field for POST. Change method to deselect.`, severity: 'warning' });
+      return;
+    }
+    
     if (isAdding) {
       // Prevent selecting fields that would cause SQL errors when there are groupings or aggregations
       const hasGroupBy = groupBy.length > 0;
@@ -203,7 +210,56 @@ const Builder = ({ onClose, editingEndpoint }) => {
   const [saveOpen, setSaveOpen] = useState(false);
   const [endpointName, setEndpointName] = useState('');
   const [endpointSlug, setEndpointSlug] = useState('');
+  const [endpointMethod, setEndpointMethod] = useState('GET');
   const [snack, setSnack] = useState(null);
+
+  // Helper to check if a field is required (NOT NULL, no default, not a PK)
+  const isRequiredField = (tableName, fieldName) => {
+    if (!schema || !schema[tableName]) return false;
+    const cols = schema[tableName].columns || [];
+    const pks = schema[tableName].primaryKeys || [];
+    const col = cols.find(c => c.name === fieldName);
+    if (!col) return false;
+    // Skip PKs - they're usually auto-generated
+    if (pks.includes(col.name)) return false;
+    const isNullable = col.nullable === true || col.nullable === 'YES';
+    const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+    return !isNullable && !hasDefault;
+  };
+
+  // Get all required fields for all tables
+  const getRequiredFields = () => {
+    const required = {};
+    tables.forEach(table => {
+      const cols = schema?.[table]?.columns || [];
+      const pks = schema?.[table]?.primaryKeys || [];
+      required[table] = cols
+        .filter(col => {
+          if (pks.includes(col.name)) return false;
+          const isNullable = col.nullable === true || col.nullable === 'YES';
+          const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+          return !isNullable && !hasDefault;
+        })
+        .map(c => c.name);
+    });
+    return required;
+  };
+
+  // Auto-select required fields when method changes to POST
+  useEffect(() => {
+    if (endpointMethod === 'POST' && schema && tables.length > 0) {
+      const requiredFields = getRequiredFields();
+      setOutputFields(prev => {
+        const updated = { ...prev };
+        Object.entries(requiredFields).forEach(([table, fields]) => {
+          const current = new Set(prev[table] || []);
+          fields.forEach(f => current.add(f));
+          updated[table] = Array.from(current);
+        });
+        return updated;
+      });
+    }
+  }, [endpointMethod, tables, schema]);
 
   const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
@@ -283,9 +339,10 @@ const Builder = ({ onClose, editingEndpoint }) => {
     }));
     setHaving(loadedHaving);
     
-    // Set name and slug for save dialog
+    // Set name, slug, and method for save dialog
     setEndpointName(editingEndpoint.name || '');
     setEndpointSlug(editingEndpoint.slug || '');
+    setEndpointMethod(editingEndpoint.method || 'GET');
   }, [editingEndpoint]);
 
   const openSave = () => {
@@ -293,9 +350,11 @@ const Builder = ({ onClose, editingEndpoint }) => {
       // When editing, pre-fill with existing values
       setEndpointName(editingEndpoint.name || '');
       setEndpointSlug(editingEndpoint.slug || '');
+      // Don't reset method - it's already set in header or from editingEndpoint
     } else {
       setEndpointName('');
       setEndpointSlug('');
+      // Don't reset method - user already selected it in the header
     }
     setSaveOpen(true);
   };
@@ -389,9 +448,17 @@ const Builder = ({ onClose, editingEndpoint }) => {
       };
     });
 
+    // Map method to operations
+    const methodOperations = {
+      GET: ['read'],
+      POST: ['create'],
+      PUT: ['update'],
+      DELETE: ['delete'],
+    };
+
     const payload = {
       name: endpointName,
-      method: 'GET',
+      method: endpointMethod,
       path: `/${slugify(endpointName || 'endpoint')}`,
       source: { table: sourceTable, alias: sourceAlias },
       joins: formattedJoins,
@@ -400,10 +467,10 @@ const Builder = ({ onClose, editingEndpoint }) => {
       aggregations: aggsFormatted,
       having: havingFormatted,
       fields,
-      paginate: true,
-      pagination: { pageParam: 'page', sizeParam: 'page_size', defaultSize: 50, maxSize: 200 },
+      paginate: endpointMethod === 'GET',
+      pagination: endpointMethod === 'GET' ? { pageParam: 'page', sizeParam: 'page_size', defaultSize: 50, maxSize: 200 } : undefined,
       sort: [],
-      operations: ['read'],
+      operations: methodOperations[endpointMethod] || ['read'],
     };
 
     return payload;
@@ -429,6 +496,39 @@ const Builder = ({ onClose, editingEndpoint }) => {
       return;
     }
 
+    // For POST method, check if required fields (NOT NULL without default) are selected
+    if (endpointMethod === 'POST' && schema && tables.length > 0) {
+      const missingRequired = [];
+      tables.forEach(table => {
+        const cols = schema[table]?.columns || [];
+        const pks = schema[table]?.primaryKeys || [];
+        const selectedFields = outputFields[table] || [];
+        
+        cols.forEach(col => {
+          // Skip auto-increment PKs (they're generated)
+          if (pks.includes(col.name) && col.isAutoIncrement) return;
+          // Skip PKs entirely for POST (they're usually auto-generated)
+          if (pks.includes(col.name)) return;
+          // Check if column is required (NOT NULL and no default)
+          // nullable: true means can be NULL, nullable: false means required
+          const isNullable = col.nullable === true || col.nullable === 'YES';
+          const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+          const isRequired = !isNullable && !hasDefault;
+          if (isRequired && !selectedFields.includes(col.name)) {
+            missingRequired.push(`${table}.${col.name}`);
+          }
+        });
+      });
+      
+      if (missingRequired.length > 0) {
+        setSnack({ 
+          msg: `Warning: Required fields not selected for POST: ${missingRequired.slice(0, 3).join(', ')}${missingRequired.length > 3 ? ` and ${missingRequired.length - 3} more` : ''}. These fields won't be in the request body.`, 
+          severity: 'warning' 
+        });
+        // Don't block save, just warn
+      }
+    }
+
     const payload = buildPayloadFromState();
 
     // Ensure the saved endpoint includes a canonical `graph` object so previews and Try-it
@@ -436,6 +536,11 @@ const Builder = ({ onClose, editingEndpoint }) => {
     payload.graph = {
       source: payload.source,
       joins: payload.joins,
+      filters: payload.filters,
+      groupBy: payload.groupBy,
+      aggregations: payload.aggregations,
+      having: payload.having,
+      outputFields: outputFields, // Include selected fields for POST/PUT body
       fields: payload.fields,
       filters: payload.filters,
       groupBy: payload.groupBy,
@@ -502,7 +607,34 @@ const Builder = ({ onClose, editingEndpoint }) => {
               </Typography>
             </Box>
           </Box>
-          <Box sx={{ display: 'flex', gap: 1.5 }}>
+          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+            {/* HTTP Method Selector - visible before saving */}
+            <TextField
+              select
+              size="small"
+              value={endpointMethod}
+              onChange={(e) => setEndpointMethod(e.target.value)}
+              sx={{ 
+                minWidth: 130,
+                "& .MuiOutlinedInput-root": { borderRadius: 2 },
+              }}
+            >
+              {[
+                { value: 'GET', label: 'GET', color: 'success' },
+                { value: 'POST', label: 'POST', color: 'info' },
+                { value: 'PUT', label: 'PUT', color: 'warning' },
+                { value: 'DELETE', label: 'DELETE', color: 'error' },
+              ].map((m) => (
+                <MenuItem key={m.value} value={m.value}>
+                  <Chip 
+                    label={m.label} 
+                    size="small" 
+                    color={m.color}
+                    sx={{ fontWeight: 600, minWidth: 65 }}
+                  />
+                </MenuItem>
+              ))}
+            </TextField>
             <Tooltip 
               title={
                 tables.length === 0 
@@ -598,6 +730,8 @@ const Builder = ({ onClose, editingEndpoint }) => {
               havingDraft={havingDraft}
               setHavingDraft={setHavingDraft}
               onSelectAllFields={selectAllFields}
+              endpointMethod={endpointMethod}
+              requiredFields={endpointMethod === 'POST' ? getRequiredFields() : {}}
             />
           </Paper>
         </Grid>
@@ -774,15 +908,18 @@ const Builder = ({ onClose, editingEndpoint }) => {
       {snack && (
         <Snackbar
           open
-          autoHideDuration={5000}
+          autoHideDuration={snack.severity === 'warning' ? 8000 : 5000}
           onClose={() => setSnack(null)}
-          message={snack.msg}
-          action={snack.action?.copy ? (
-            <IconButton color="inherit" size="small" onClick={() => navigator.clipboard.writeText(snack.action.copy)}>
-              Copy
-            </IconButton>
-          ) : undefined}
-        />
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert 
+            onClose={() => setSnack(null)} 
+            severity={snack.severity || 'info'} 
+            sx={{ width: '100%', borderRadius: 2 }}
+          >
+            {snack.msg}
+          </Alert>
+        </Snackbar>
       )}
 
     </Box>

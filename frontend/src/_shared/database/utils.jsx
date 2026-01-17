@@ -50,6 +50,7 @@ export function renderColumnControl({
   size = "small",
   fullWidth = true,
   disabled = false,
+  label = null, // Optional label, can be used as a lookup key for FK options
 }) {
   const colName = col.name || "";
   const type = (col.type || "").toLowerCase();
@@ -58,7 +59,9 @@ export function renderColumnControl({
   const fks = schema[tableName]?.foreignKeys || [];
   const fk = fks.find((f) => f.columnName === col.name);
   if (fk) {
-    const rawOpts = foreignKeyOptions[col.name];
+    // Try multiple keys for FK options: prefixed (table.column), label, and column name
+    const prefixedKey = tableName ? `${tableName}.${col.name}` : col.name;
+    const rawOpts = foreignKeyOptions[prefixedKey] ?? foreignKeyOptions[label] ?? foreignKeyOptions[col.name];
     const loading = rawOpts === undefined;
     const opts = Array.isArray(rawOpts) ? rawOpts : [];
     const valKey = fk.foreignColumn || fk.foreign_column || "id";

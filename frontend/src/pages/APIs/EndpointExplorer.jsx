@@ -40,7 +40,7 @@ import BookmarkIcon from "@mui/icons-material/Bookmark";
 import CloseIcon from "@mui/icons-material/Close";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
-import { listEndpoints, previewGraph, deleteEndpoint } from "../../services/api";
+import { listEndpoints, previewGraph, previewExecuteSql, deleteEndpoint } from "../../services/api";
 import { AppContext } from "../../App";
 import { useGetRemoteEndpoints } from "../../_shared/database/useGetRemoteEndpoints";
 
@@ -147,7 +147,18 @@ const EndpointExplorer = forwardRef(function EndpointExplorer({ connectionId, on
     setSavedPreviewError(null);
     try {
       const graphToUse = endpoint.graph || endpoint;
-      const res = await previewGraph(connectionId, graphToUse, 5);
+      const method = (endpoint.method || 'GET').toUpperCase();
+      
+      let res;
+      if (method === 'GET') {
+        // For GET, use the preview endpoint (SELECT)
+        res = await previewGraph(connectionId, graphToUse, 5);
+      } else {
+        // For POST/PUT/DELETE, use the execute endpoint with previewOnly
+        // Map HTTP methods to SQL operations: POST→INSERT, PUT→UPDATE, DELETE→DELETE
+        const operationMap = { POST: 'INSERT', PUT: 'UPDATE', DELETE: 'DELETE' };
+        res = await previewExecuteSql(connectionId, operationMap[method] || method, graphToUse);
+      }
       setSavedPreview(res);
       setSavedPreviewOpen(true);
     } catch (err) {

@@ -71,29 +71,64 @@ const APITester = ({
   useEffect(() => {
     if (operation === "DELETE") setFiltersCollapsed(false);
   }, [operation]);
+  
+  // Default operators to use when none are available from backend
+  const defaultOperators = [
+    { value: 'eq', label: '=' },
+    { value: 'neq', label: '!=' },
+    { value: 'lt', label: '<' },
+    { value: 'lte', label: '<=' },
+    { value: 'gt', label: '>' },
+    { value: 'gte', label: '>=' },
+    { value: 'like', label: 'contains' },
+    { value: 'in', label: 'in' },
+  ];
+  
   // Return operator options appropriate for the column type
-  function getOperatorsForColumn(col) {
+  function getOperatorsForColumn(col, tableName = null) {
     // Prefer backend-provided operators when available
+    const table = tableName || selectedTable;
+    const colName = col.originalName || col.name;
     try {
-      return (
-        operatorsMap[selectedTable][col.name] ??
-        operatorsMap[endpoint?.relatedTable]?.[col.name]
-      );
+      const ops = operatorsMap?.[table]?.[colName] ??
+        operatorsMap?.[selectedTable]?.[colName] ??
+        operatorsMap?.[endpoint?.relatedTable]?.[colName];
+      
+      // Return backend operators if available, otherwise use defaults
+      return (ops && ops.length > 0) ? ops : defaultOperators;
     } catch (e) {
-      return [];
+      return defaultOperators;
     }
   }
   // Initialize filter inputs when selectedTable or schema changes
   useEffect(() => {
     if (!schema || !selectedTable) return;
-    let cols = schema[selectedTable]?.columns || [];
-    if (endpoint?.relatedTable) {
-      cols = [...cols, ...(schema[endpoint.relatedTable]?.columns || [])];
+    
+    // Collect all tables from endpoint graph if available
+    const tablesToInclude = [];
+    if (endpoint?.graph?.source?.table) {
+      tablesToInclude.push(endpoint.graph.source.table);
+      (endpoint.graph.joins || []).forEach(j => {
+        const toTable = j.to?.table || j.toTable || j.to;
+        const fromTable = j.from?.table || j.fromTable || j.from;
+        if (toTable && !tablesToInclude.includes(toTable)) tablesToInclude.push(toTable);
+        if (fromTable && !tablesToInclude.includes(fromTable)) tablesToInclude.push(fromTable);
+      });
+    } else {
+      tablesToInclude.push(selectedTable);
+      if (endpoint?.relatedTable) tablesToInclude.push(endpoint.relatedTable);
     }
+    
+    const hasMultipleTables = tablesToInclude.length > 1;
     const obj = {};
-    cols.forEach((c) => {
-      if ((c.name || "").toLowerCase().includes("password")) return;
-      obj[c.name] = { op: getOperatorsForColumn(c)[0].value, val: "" };
+    tablesToInclude.forEach(tableName => {
+      const cols = schema[tableName]?.columns || [];
+      cols.forEach((c) => {
+        if ((c.name || "").toLowerCase().includes("password")) return;
+        const key = hasMultipleTables ? `${tableName}.${c.name}` : c.name;
+        const ops = getOperatorsForColumn(c, tableName);
+        obj[key] = { op: ops[0]?.value || 'eq', val: "" };
+      });
     });
 
     setFilters(obj);
@@ -105,54 +140,87 @@ const APITester = ({
 
   // Initialize bodyFields for POST/PUT based on column types (exclude PK and sensitive fields)
   useEffect(() => {
-    if (!schema || !selectedTable) return;
-    if (operation !== "POST" && operation !== "PUT") return;
-    const cols = schema[selectedTable]?.columns || [];
-    const pk =
-      schema[selectedTable]?.primaryKeys &&
-      schema[selectedTable].primaryKeys[0];
+    if (!schema) return;
+    const endpointMethod = endpoint?.method || operation;
+    if (endpointMethod !== "POST" && endpointMethod !== "PUT") return;
+    
+    const sourceTable = endpoint?.graph?.source?.table || selectedTable;
+    
+    // Collect tables to include: for POST include all (source + joined), for PUT only source
+    const tablesToInclude = [];
+    if (endpoint?.graph?.source?.table) {
+      tablesToInclude.push(endpoint.graph.source.table);
+      // For POST: include joined tables. For PUT: only source table (can't update joined tables)
+      if (endpointMethod === "POST") {
+        (endpoint.graph.joins || []).forEach(j => {
+          const toTable = j.to?.table || j.toTable || j.to;
+          const fromTable = j.from?.table || j.fromTable || j.from;
+          if (toTable && !tablesToInclude.includes(toTable)) tablesToInclude.push(toTable);
+          if (fromTable && !tablesToInclude.includes(fromTable)) tablesToInclude.push(fromTable);
+        });
+      }
+    } else if (selectedTable) {
+      tablesToInclude.push(selectedTable);
+    }
+    
+    // Get outputFields from endpoint if available (user-selected fields in Builder)
+    const endpointOutputFields = endpoint?.graph?.outputFields || endpoint?.outputFields;
+    
     const body = {};
-
-    cols.forEach((c) => {
-      if (c.name === pk) return; // PK handled above
-      const name = (c.name || "").toLowerCase();
-      if (name.includes("password")) return; // skip sensitive
-      const type = (c.type || "").toLowerCase();
-      let def = c.default;
-      if (typeof def === "string" && def.includes("::")) {
-        def = def.split("::")[0];
-        if (def.startsWith("'") && def.endsWith("'")) {
-          def = def.slice(1, -1);
+    tablesToInclude.forEach(table => {
+      const cols = schema[table]?.columns || [];
+      const pks = schema[table]?.primaryKeys || [];
+      const prefix = tablesToInclude.length > 1 ? `${table}.` : '';
+      
+      // If endpoint has outputFields, only include those fields
+      const selectedFieldsForTable = endpointOutputFields?.[table];
+      
+      cols.forEach((c) => {
+        // If outputFields exist for this table, only include selected fields
+        if (selectedFieldsForTable && !selectedFieldsForTable.includes(c.name)) return;
+        
+        if (pks.includes(c.name)) return; // Skip PK
+        const name = (c.name || "").toLowerCase();
+        // Skip password fields only for PUT (updates), not for POST (new records)
+        if (name.includes("password") && endpointMethod === "PUT") return;
+        const type = (c.type || "").toLowerCase();
+        let def = c.default;
+        if (typeof def === "string" && def.includes("::")) {
+          def = def.split("::")[0];
+          if (def.startsWith("'") && def.endsWith("'")) {
+            def = def.slice(1, -1);
+          }
         }
-      }
-      if (Array.isArray(c.enumOptions) && c.enumOptions.length > 0) {
-        body[c.name] = c.enumOptions[0] ?? "";
-      } else if (
-        [
-          "int",
-          "integer",
-          "bigint",
-          "smallint",
-          "numeric",
-          "decimal",
-          "float",
-          "double",
-          "real",
-        ].some((t) => type.includes(t))
-      ) {
-        body[c.name] = "";
-      } else if (["bool", "boolean"].some((t) => type.includes(t))) {
-        body[c.name] = "";
-      } else if (
-        ["date", "timestamp", "datetime"].some((t) => type.includes(t))
-      ) {
-        body[c.name] = "";
-      } else {
-        body[c.name] = def ?? "";
-      }
+        const key = prefix + c.name;
+        if (Array.isArray(c.enumOptions) && c.enumOptions.length > 0) {
+          body[key] = c.enumOptions[0] ?? "";
+        } else if (
+          [
+            "int",
+            "integer",
+            "bigint",
+            "smallint",
+            "numeric",
+            "decimal",
+            "float",
+            "double",
+            "real",
+          ].some((t) => type.includes(t))
+        ) {
+          body[key] = "";
+        } else if (["bool", "boolean"].some((t) => type.includes(t))) {
+          body[key] = "";
+        } else if (
+          ["date", "timestamp", "datetime"].some((t) => type.includes(t))
+        ) {
+          body[key] = "";
+        } else {
+          body[key] = def ?? "";
+        }
+      });
     });
     setBodyFields(body);
-  }, [schema, selectedTable, operation]);
+  }, [schema, selectedTable, operation, endpoint]);
 
   const buildPayloadFromBodyFields = () => {
     if (!schema || !selectedTable) return {};
@@ -203,30 +271,54 @@ const APITester = ({
   };
 
   const buildPostPayload = () => {
-    if (!schema || !selectedTable) return {};
-    const cols = schema[selectedTable]?.columns || [];
-    const pk = schema[selectedTable]?.primaryKeys?.[0];
+    if (!schema) return {};
+    
+    // Collect all tables to include: source + joined tables
+    const tablesToInclude = [];
+    if (endpoint?.graph?.source?.table) {
+      tablesToInclude.push(endpoint.graph.source.table);
+      (endpoint.graph.joins || []).forEach(j => {
+        const toTable = j.to?.table || j.toTable || j.to;
+        const fromTable = j.from?.table || j.fromTable || j.from;
+        if (toTable && !tablesToInclude.includes(toTable)) tablesToInclude.push(toTable);
+        if (fromTable && !tablesToInclude.includes(fromTable)) tablesToInclude.push(fromTable);
+      });
+    } else if (selectedTable) {
+      tablesToInclude.push(selectedTable);
+    }
+    
     const payload = {};
     Object.entries(bodyFields || {}).forEach(([k, v]) => {
-      const col = cols.find((c) => c.name === k);
-      if (!col) return;
-      // Exclude PK if auto-increment, and password fields
-      if (
-        (col.name === pk && col.isAutoIncrement) ||
-        (col.name || "").toLowerCase().includes("password")
-      )
-        return;
       if (v === "" || v === undefined) return;
+      
+      // Parse table.column format or use source table
+      let table, colName;
+      if (k.includes('.')) {
+        [table, colName] = k.split('.');
+      } else {
+        table = tablesToInclude[0] || selectedTable;
+        colName = k;
+      }
+      
+      const cols = schema[table]?.columns || [];
+      const col = cols.find((c) => c.name === colName);
+      if (!col) return;
+      
+      const pks = schema[table]?.primaryKeys || [];
+      // Exclude PK if auto-increment (password fields are allowed for POST)
+      if (pks.includes(colName) && col.isAutoIncrement) return;
+      
       const type = (col?.type || "").toLowerCase();
+      let processedValue = v;
+      
       // booleans
       if (["bool", "boolean"].some((t) => type.includes(t))) {
-        if (v === true || v === "true" || v === "1") payload[k] = true;
-        else if (v === false || v === "false" || v === "0") payload[k] = false;
-        else payload[k] = Boolean(v);
-        return;
+        if (v === true || v === "true" || v === "1") processedValue = true;
+        else if (v === false || v === "false" || v === "0") processedValue = false;
+        else processedValue = Boolean(v);
       }
       // numbers
-      if (
+      else if (
         [
           "int",
           "integer",
@@ -240,32 +332,62 @@ const APITester = ({
         ].some((t) => type.includes(t))
       ) {
         const num = Number(v);
-        if (!Number.isNaN(num)) payload[k] = num;
-        return;
+        if (!Number.isNaN(num)) processedValue = num;
+        else return; // Skip if not a valid number
       }
-      // default: send as-is (strings, enums, dates)
-      payload[k] = v;
+      
+      // Keep the full key (table.column) for multi-table inserts
+      payload[k] = processedValue;
     });
     return payload;
   };
 
-  // Load foreign key options for dropdowns when selectedTable changes
+  // Load foreign key options for dropdowns when selectedTable or endpoint changes
   useEffect(() => {
-    if (!schema || !selectedTable || !connectionId) return;
-    const fks = schema[selectedTable]?.foreignKeys || [];
+    if (!schema || !connectionId) return;
+    
+    // Collect all tables to load FK options for
+    const tablesToLoad = [];
+    if (endpoint?.graph?.source?.table) {
+      tablesToLoad.push(endpoint.graph.source.table);
+      (endpoint.graph.joins || []).forEach(j => {
+        const toTable = j.to?.table || j.toTable || j.to;
+        const fromTable = j.from?.table || j.fromTable || j.from;
+        if (toTable && !tablesToLoad.includes(toTable)) tablesToLoad.push(toTable);
+        if (fromTable && !tablesToLoad.includes(fromTable)) tablesToLoad.push(fromTable);
+      });
+    } else if (selectedTable) {
+      tablesToLoad.push(selectedTable);
+    }
+    
+    if (tablesToLoad.length === 0) return;
+    
+    // Collect all FKs from all tables
+    const allFks = [];
+    tablesToLoad.forEach(table => {
+      const fks = schema[table]?.foreignKeys || [];
+      const prefix = tablesToLoad.length > 1 ? `${table}.` : '';
+      fks.forEach(fk => {
+        allFks.push({ ...fk, prefixedColumn: prefix + fk.columnName });
+      });
+    });
+    
     const options = {};
-    const fetches = fks.map(async (fk) => {
+    const fetches = allFks.map(async (fk) => {
       try {
         const rows = await listRecords(connectionId, fk.foreignTable, {
           limit: 1000,
         });
-        options[fk.columnName] = rows;
+        options[fk.prefixedColumn] = rows;
+        // Also store without prefix for backward compatibility
+        if (!options[fk.columnName]) options[fk.columnName] = rows;
       } catch (e) {
-        options[fk.columnName] = [];
+        options[fk.prefixedColumn] = [];
+        if (!options[fk.columnName]) options[fk.columnName] = [];
       }
     });
     Promise.all(fetches).then(() => setForeignKeyOptions(options));
-  }, [schema, selectedTable, connectionId]);
+  }, [schema, selectedTable, connectionId, endpoint]);
 
   const handleSend = async () => {
     if (!selectedTable && !endpoint?.graph) {
@@ -282,6 +404,7 @@ const APITester = ({
       let result;
 
       // If endpoint has a graph (custom saved endpoint), use preview endpoint
+      // Note: Custom saved endpoints use the graph's query definition
       if (endpoint?.graph) {
         // Build limit from pagination settings
         const ps = pageSize ? Number(pageSize) : 100;
@@ -294,23 +417,67 @@ const APITester = ({
         const additionalFilters = [];
         Object.entries(filters || {}).forEach(([k, v]) => {
           if (v?.val !== "" && v?.val !== undefined) {
+            // Parse table.column format or use source table
+            let filterTable, filterField;
+            if (k.includes('.')) {
+              [filterTable, filterField] = k.split('.');
+            } else {
+              filterTable = sourceTable;
+              filterField = k;
+            }
             additionalFilters.push({
-              field: `${sourceTable}.${k}`,
-              table: sourceTable,
+              field: filterField,
+              table: filterTable,
               op: v.op || "eq",
               value: v.val,
             });
           }
         });
         
-        result = await api.post(`/connections/${connectionId}/preview`, {
-          graph: endpoint.graph,
-          limit: ps,
-          offset: offset,
-          orderBy: orderBy || undefined,
-          orderDir: orderDir || 'ASC',
-          additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
-        });
+        // For custom saved endpoints, determine behavior based on method
+        const endpointMethod = endpoint?.method || 'GET';
+        
+        if (endpointMethod === 'GET') {
+          // GET: Use preview to fetch data with full graph context (joins, aggregations, etc.)
+          result = await api.post(`/connections/${connectionId}/preview`, {
+            graph: endpoint.graph,
+            limit: ps,
+            offset: offset,
+            orderBy: orderBy || undefined,
+            orderDir: orderDir || 'ASC',
+            additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
+          });
+        } else if (endpointMethod === 'POST') {
+          // POST: Create new record using full graph context
+          const parsedBody = buildPostPayload();
+          result = await api.post(`/connections/${connectionId}/execute`, {
+            operation: 'INSERT',
+            graph: endpoint.graph,
+            data: parsedBody,
+            additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
+          });
+        } else if (endpointMethod === 'PUT') {
+          // PUT: Update records using full graph context (joins included for filtering)
+          const updateFields = buildPayloadFromBodyFields();
+          result = await api.post(`/connections/${connectionId}/execute`, {
+            operation: 'UPDATE',
+            graph: endpoint.graph,
+            data: updateFields,
+            additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
+          });
+        } else if (endpointMethod === 'DELETE') {
+          // DELETE: Delete records using full graph context (joins included for filtering)
+          if (additionalFilters.length === 0 && (!endpoint.graph?.filters || endpoint.graph.filters.length === 0)) {
+            setError('DELETE requires at least one filter to avoid accidental full-table deletes.');
+            setLoading(false);
+            return;
+          }
+          result = await api.post(`/connections/${connectionId}/execute`, {
+            operation: 'DELETE',
+            graph: endpoint.graph,
+            additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
+          });
+        }
       } else {
         // Standard table CRUD - original logic
         const pathParamNames = [];
@@ -413,14 +580,33 @@ const APITester = ({
     }
   };
   // Helper to render a filter field for a column (uses shared control)
-  function renderFilterField(col, withOperator = true) {
-    const colName = col.name || "";
-    if (colName.toLowerCase().includes("password")) return null;
+  // When forBody=true, uses bodyFields state instead of filters
+  // tableName is used for building proper filter keys for multi-table endpoints
+  function renderFilterField(col, withOperator = true, tableName = null) {
+    // Use originalName if available (when col was prefixed), otherwise use col.name
+    const originalColName = col.originalName || col.name || "";
+    const displayName = col.originalName || col.name;
+    
+    // Determine if this is for body (POST/PUT) or filters
+    const isForBody = tableName !== null && !withOperator;
+    const isPost = operation === "POST" || endpoint?.method === "POST";
+    
+    // Skip password fields for filters and PUT, but allow for POST body
+    if (displayName.toLowerCase().includes("password") && !(isForBody && isPost)) return null;
 
-    const op = filters[col.name]?.op ?? "eq";
-    const val = filters[col.name]?.val ?? "";
+    // Build the filter key - use table prefix if provided (for multi-table endpoints)
+    // Use originalColName to avoid double-prefixing when col.name is already prefixed
+    const filterKey = tableName ? `${tableName}.${originalColName}` : originalColName;
+    
+    const op = filters[filterKey]?.op ?? "eq";
+    const val = isForBody ? (bodyFields[filterKey] ?? "") : (filters[filterKey]?.val ?? "");
+    
+    const handleChange = isForBody 
+      ? (v) => setBodyFields((f) => ({ ...f, [filterKey]: v }))
+      : (v) => setFilters((f) => ({ ...(f || {}), [filterKey]: { ...(f[filterKey] || {}), val: v } }));
+    
     return (
-      <Box display={"flex"} gap={1} width="100%" key={col.name}>
+      <Box display={"flex"} gap={1} width="100%" key={filterKey}>
         {withOperator && (
           <TextField
             select
@@ -429,12 +615,12 @@ const APITester = ({
             onChange={(e) =>
               setFilters((f) => ({
                 ...f,
-                [col.name]: { ...(f[col.name] || {}), op: e.target.value },
+                [filterKey]: { ...(f[filterKey] || {}), op: e.target.value },
               }))
             }
             sx={{ width: 160 }}
           >
-            {getOperatorsForColumn(col).map((o) => (
+            {getOperatorsForColumn(col, tableName).map((o) => (
               <MenuItem key={o.value} value={o.value}>
                 {o.label}
               </MenuItem>
@@ -444,16 +630,13 @@ const APITester = ({
 
         <Box sx={{ flex: 1 }}>
           {renderColumnControl({
-            col,
+            col: { ...col, name: displayName },
             value: val,
-            onChange: (v) =>
-              setFilters((f) => ({
-                ...(f || {}),
-                [col.name]: { ...(f[col.name] || {}), val: v },
-              })),
+            onChange: handleChange,
             schema,
-            tableName: selectedTable,
+            tableName: tableName || selectedTable,
             foreignKeyOptions,
+            label: filterKey, // Show full prefixed name as label
           })}
         </Box>
       </Box>
@@ -542,26 +725,76 @@ const APITester = ({
         </Box>
       </Paper>
 
-      {(operation === "POST" || operation === "PUT") && (
+      {(operation === "POST" || operation === "PUT" || endpoint?.method === "POST" || endpoint?.method === "PUT") && (
         <Paper variant="outlined" sx={{ p: 2.5, mb: 3, borderRadius: 3 }}>
           <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2 }}>
-            {operation === "POST" ? "Request Body" : "Fields to Update"}
+            {(operation === "POST" || endpoint?.method === "POST") ? "Request Body" : "Fields to Update"}
           </Typography>
           <Box display={"flex"} flexDirection={"column"} gap={2}>
-            {schema &&
-              selectedTable &&
-              (schema[selectedTable]?.columns || []).map((col) => {
-                const pk = schema[selectedTable]?.primaryKeys;
-                const isPk = pk.includes(col.name);
-                const isFK = (schema[selectedTable]?.foreignKeys || []).some(
-                  (fk) => fk.columnName === col.name
+            {schema && (() => {
+              const isPut = operation === "PUT" || endpoint?.method === "PUT";
+              
+              // Collect tables to render fields for
+              // For PUT: only source table (can't update joined tables)
+              // For POST: all tables (source + joined)
+              const tablesToRender = [];
+              if (endpoint?.graph?.source?.table) {
+                tablesToRender.push(endpoint.graph.source.table);
+                // Only include joined tables for POST, not PUT
+                if (!isPut) {
+                  (endpoint.graph.joins || []).forEach(j => {
+                    const toTable = j.to?.table || j.toTable || j.to;
+                    const fromTable = j.from?.table || j.fromTable || j.from;
+                    if (toTable && !tablesToRender.includes(toTable)) tablesToRender.push(toTable);
+                    if (fromTable && !tablesToRender.includes(fromTable)) tablesToRender.push(fromTable);
+                  });
+                }
+              } else if (selectedTable) {
+                tablesToRender.push(selectedTable);
+              }
+              
+              // Get outputFields from endpoint if available (user-selected fields in Builder)
+              const endpointOutputFields = endpoint?.graph?.outputFields || endpoint?.outputFields;
+              
+              return tablesToRender.map(table => {
+                const cols = schema[table]?.columns || [];
+                const pks = schema[table]?.primaryKeys || [];
+                const fks = (schema[table]?.foreignKeys || []).map(fk => fk.columnName);
+                const prefix = tablesToRender.length > 1 ? `${table}.` : '';
+                
+                // If endpoint has outputFields, only show those fields
+                const selectedFieldsForTable = endpointOutputFields?.[table];
+                
+                return (
+                  <React.Fragment key={table}>
+                    {tablesToRender.length > 1 && (
+                      <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ mt: 1 }}>
+                        {table}
+                      </Typography>
+                    )}
+                    {cols.map((col) => {
+                      // If outputFields exist for this table, only show selected fields
+                      if (selectedFieldsForTable && !selectedFieldsForTable.includes(col.name)) return null;
+                      
+                      const isPk = pks.includes(col.name);
+                      const isFk = fks.includes(col.name);
+                      const name = (col.name || "").toLowerCase();
+                      const isPost = operation === "POST" || endpoint?.method === "POST";
+                      // Skip password fields only for PUT (updates), show them for POST (new records)
+                      if (name.includes("password") && !isPost) return null;
+                      if (isPk && !isFk) return null;
+                      
+                      // Create a modified col object with prefixed name for multi-table
+                      const colWithPrefix = tablesToRender.length > 1 
+                        ? { ...col, name: prefix + col.name, originalName: col.name }
+                        : col;
+                      
+                      return renderFilterField(colWithPrefix, false, table);
+                    })}
+                  </React.Fragment>
                 );
-                const name = (col.name || "").toLowerCase();
-                if (name.includes("password")) return null;
-                if (isPk && !isFK) return null;
-
-                return renderFilterField(col, false);
-              })}
+              });
+            })()}
           </Box>
         </Paper>
       )}
@@ -587,6 +820,7 @@ const APITester = ({
           foreignKeyOptions={foreignKeyOptions}
           operation={operation}
           renderFilterField={renderFilterField}
+          endpoint={endpoint}
         />
         </Box>
       )}

@@ -1,3 +1,4 @@
+import React from 'react';
 import { Box, Button, Collapse, Typography, Chip, Paper, alpha, useTheme } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -22,11 +23,30 @@ const AdditionalFiltersToggle = ({
     setPageNumber,
     foreignKeyOptions,
     operation,
-    renderFilterField
+    renderFilterField,
+    endpoint
 }) => {
     const theme = useTheme();
 
     if (!schema || !selectedTable) return null;
+
+    // For saved endpoints with graphs, collect all tables from the graph
+    const getTablesToShow = () => {
+        if (endpoint?.graph?.source?.table) {
+            const tables = [endpoint.graph.source.table];
+            (endpoint.graph.joins || []).forEach(j => {
+                const toTable = j.to?.table || j.toTable || j.to;
+                const fromTable = j.from?.table || j.fromTable || j.from;
+                if (toTable && !tables.includes(toTable)) tables.push(toTable);
+                if (fromTable && !tables.includes(fromTable)) tables.push(fromTable);
+            });
+            return tables;
+        }
+        return [selectedTable];
+    };
+
+    const tablesToShow = getTablesToShow();
+    const hasMultipleTables = tablesToShow.length > 1;
 
     const activeFiltersCount = Object.values(filters || {}).filter(f => f?.val !== '' && f?.val !== undefined).length;
 
@@ -83,25 +103,41 @@ const AdditionalFiltersToggle = ({
                         Filter by Column
                     </Typography>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {schema && selectedTable && (schema[selectedTable]?.columns || [])
-                            .filter(c => !(c.name || '').toLowerCase().includes('password'))
-                            .map((c) => (
-                                <Box key={c.name} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                    <Typography 
-                                        variant="body2" 
-                                        sx={{ 
-                                            minWidth: 120, 
-                                            fontWeight: 500,
-                                            color: "text.secondary",
-                                        }}
-                                    >
-                                        {c.name}
-                                    </Typography>
-                                    <Box sx={{ flex: 1 }}>
-                                        {renderFilterField(c)}
-                                    </Box>
-                                </Box>
-                            ))}
+                        {tablesToShow.map(tableName => {
+                            const cols = (schema[tableName]?.columns || [])
+                                .filter(c => !(c.name || '').toLowerCase().includes('password'));
+                            if (cols.length === 0) return null;
+                            return (
+                                <React.Fragment key={tableName}>
+                                    {hasMultipleTables && (
+                                        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mt: 1 }}>
+                                            {tableName}
+                                        </Typography>
+                                    )}
+                                    {cols.map((c) => {
+                                        const fieldKey = hasMultipleTables ? `${tableName}.${c.name}` : c.name;
+                                        return (
+                                            <Box key={fieldKey} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                <Typography 
+                                                    variant="body2" 
+                                                    sx={{ 
+                                                        minWidth: 140, 
+                                                        fontWeight: 500,
+                                                        color: "text.secondary",
+                                                    }}
+                                                >
+                                                    {hasMultipleTables ? `${tableName}.${c.name}` : c.name}
+                                                </Typography>
+                                                <Box sx={{ flex: 1 }}>
+                                                    {/* renderFilterField(col, withOperator, tableName) - pass true for withOperator, and tableName for proper filter keys */}
+                                                    {renderFilterField(c, true, hasMultipleTables ? tableName : null)}
+                                                </Box>
+                                            </Box>
+                                        );
+                                    })}
+                                </React.Fragment>
+                            );
+                        })}
                     </Box>
 
                     {operation === 'GET' && (
@@ -110,7 +146,12 @@ const AdditionalFiltersToggle = ({
                                 Sorting & Pagination
                             </Typography>
                             <GetOptionsPanel
-                                columns={(schema[selectedTable]?.columns || [])}
+                                columns={tablesToShow.flatMap(t => 
+                                    (schema[t]?.columns || []).map(c => ({
+                                        ...c,
+                                        name: hasMultipleTables ? `${t}.${c.name}` : c.name
+                                    }))
+                                )}
                                 orderBy={orderBy}
                                 setOrderBy={setOrderBy}
                                 orderDir={orderDir}

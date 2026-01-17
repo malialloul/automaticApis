@@ -41,8 +41,8 @@ router.post('/test', async (req, res) => {
       }
     } else {
       if (!host || !database || !user || !password) {
-        return res.status(400).json({ 
-          error: 'Missing required fields: host, database, user, password' 
+        return res.status(400).json({
+          error: 'Missing required fields: host, database, user, password'
         });
       }
     }
@@ -59,17 +59,17 @@ router.post('/test', async (req, res) => {
     });
 
     // Include any additional info returned by the driver (e.g., MongoDB ping result)
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Connection successful',
       timestamp: result.timestamp,
       info: result.info || null,
     });
   } catch (error) {
     console.error('Connection test failed:', error);
-    res.status(400).json({ 
-      success: false, 
-      error: error.message 
+    res.status(400).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -92,8 +92,8 @@ router.post('/:id/introspect', async (req, res) => {
       }
     } else {
       if (!host || !database || !user || !password) {
-        return res.status(400).json({ 
-          error: 'Missing required fields: host, database, user, password' 
+        return res.status(400).json({
+          error: 'Missing required fields: host, database, user, password'
         });
       }
     }
@@ -189,8 +189,8 @@ router.post('/:id/introspect', async (req, res) => {
     });
   } catch (error) {
     console.error('Introspection failed:', error);
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });
@@ -204,8 +204,8 @@ router.get('/:id/schema', (req, res) => {
   const schema = schemaCache.get(connectionId);
 
   if (!schema) {
-    return res.status(404).json({ 
-      error: 'Schema not found. Please introspect the database first.' 
+    return res.status(404).json({
+      error: 'Schema not found. Please introspect the database first.'
     });
   }
 
@@ -274,8 +274,8 @@ router.get('/:id/swagger', (req, res) => {
   const schema = schemaCache.get(connectionId);
 
   if (!schema) {
-    return res.status(404).json({ 
-      error: 'Schema not found. Please introspect the database first.' 
+    return res.status(404).json({
+      error: 'Schema not found. Please introspect the database first.'
     });
   }
 
@@ -315,19 +315,19 @@ router.get('/:id/debug-generated-routes', (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const connectionId = req.params.id;
-    
+
     await connectionManager.closeConnection(connectionId);
     schemaCache.delete(connectionId);
     apiRouters.delete(connectionId);
 
-    res.json({ 
-      success: true, 
-      message: 'Connection closed successfully' 
+    res.json({
+      success: true,
+      message: 'Connection closed successfully'
     });
   } catch (error) {
     console.error('Error closing connection:', error);
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });
@@ -348,8 +348,652 @@ router.get('/', (req, res) => {
 });
 
 /**
- * GET /api/connections/:id/endpoints
- * Return generated endpoints and schema for a connection (debug helper)
+ * POST /api/connections/:id/execute
+ * Execute UPDATE or DELETE with full graph context (joins for filtering)
+ * If previewOnly=true, returns the SQL without executing
+ */
+router.post('/:id/execute', async (req, res) => {
+  try {
+    const connectionId = req.params.id;
+    const { operation, graph, data, additionalFilters, previewOnly } = req.body;
+
+    if (!operation || !['INSERT', 'UPDATE', 'DELETE'].includes(operation.toUpperCase())) {
+      return res.status(400).json({ error: 'Invalid operation. Must be INSERT, UPDATE or DELETE.' });
+    }
+
+    if (!graph || !graph.source || !graph.source.table) {
+      return res.status(400).json({ error: 'Missing graph.source' });
+    }
+
+    const schema = schemaCache.get(connectionId);
+    if (!schema) {
+      return res.status(404).json({ error: 'Schema not found. Please introspect the database first.' });
+    }
+
+    // Debug: Log the users table schema
+    console.log('[DEBUG] Users table schema:', JSON.stringify(schema.users, null, 2));
+
+    const connInfo = connectionManager.getInfo(connectionId);
+    if (!connInfo) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+    const dialect = connInfo.type || 'postgres';
+    const pool = connInfo.pool;
+
+    // Helper function to get enum type names for columns with enumOptions
+    const getEnumTypeName = async (tableName, colName) => {
+      // First check if schema already has udtName (from recent introspection)
+      const col = schema[tableName]?.columns?.find(c => c.name === colName);
+      if (col?.udtName) return col.udtName;
+
+      // If not, try to look it up from information_schema for PostgreSQL
+      if (dialect === 'postgres' && col?.enumOptions) {
+        try {
+          const result = await pool.query(
+            `SELECT udt_name FROM information_schema.columns 
+             WHERE table_name = $1 AND column_name = $2`,
+            [tableName, colName]
+          );
+          if (result.rows.length > 0 && result.rows[0].udt_name) {
+            return result.rows[0].udt_name;
+          }
+        } catch (e) {
+          // Fallback if query fails
+        }
+      }
+
+      // Last resort: try to guess from column name (e.g., "role" -> "user_role")
+      if (dialect === 'postgres' && col?.enumOptions) {
+        try {
+          const guesses = [`${tableName}_${colName}`, `${colName}`, `${colName}_type`, `${colName}_enum`];
+          for (const guess of guesses) {
+            const result = await pool.query(
+              `SELECT 1 FROM pg_type WHERE typname = $1`,
+              [guess]
+            );
+            if (result.rows.length > 0) {
+              return guess;
+            }
+          }
+        } catch (e) {
+          // ignore if lookup fails
+        }
+      }
+
+      return null;
+    };
+
+    const sourceTable = graph.source.table;
+    const qb = new QueryBuilder(sourceTable, schema[sourceTable] || { columns: [], primaryKeys: [] }, dialect);
+
+    // Build alias map
+    const aliasMap = {};
+    const used = new Set();
+    function getAlias(t) {
+      if (aliasMap[t]) return aliasMap[t];
+      const base = (t && t[0]) || 't';
+      let a = base;
+      let i = 1;
+      while (used.has(a)) { a = `${base}${i}`; i++; }
+      used.add(a);
+      aliasMap[t] = a;
+      return a;
+    }
+
+    const sourceAlias = getAlias(sourceTable);
+
+    // Build JOINs
+    const joins = graph.joins || [];
+    let joinsSql = '';
+    const joinedTables = new Set([sourceTable]);
+    const processed = new Set();
+
+    let added = true;
+    while (added) {
+      added = false;
+      for (let i = 0; i < joins.length; i++) {
+        if (processed.has(i)) continue;
+        const j = joins[i];
+        const type = (j.type || 'LEFT').toUpperCase();
+        const fromTable = j.from && j.from.table ? j.from.table : j.fromTable || j.from;
+        const toTable = j.to && j.to.table ? j.to.table : j.toTable || j.to;
+        const fromField = j.from && j.from.field ? j.from.field : j.fromColumn || j.from_col || j.from;
+        const toField = j.to && j.to.field ? j.to.field : j.toColumn || j.to_col || j.to;
+
+        const fromAlias = getAlias(fromTable);
+        const toAlias = getAlias(toTable);
+
+        let joinTable, joinAlias;
+        if (joinedTables.has(fromTable) && !joinedTables.has(toTable)) {
+          joinTable = toTable;
+          joinAlias = toAlias;
+        } else if (joinedTables.has(toTable) && !joinedTables.has(fromTable)) {
+          joinTable = fromTable;
+          joinAlias = fromAlias;
+        } else {
+          continue;
+        }
+
+        joinsSql += ` ${type} JOIN ${qb.sanitizeIdentifier(joinTable)} ${joinAlias} ON ${fromAlias}.${qb.sanitizeIdentifier(fromField)} = ${toAlias}.${qb.sanitizeIdentifier(toField)}`;
+        joinedTables.add(joinTable);
+        processed.add(i);
+        added = true;
+      }
+    }
+
+    // Build WHERE clause
+    const whereClauses = [];
+
+    // Process graph filters
+    const processFilter = (f) => {
+      // Get the table name - f.table is the actual table name (e.g., "user_posts")
+      let table = f.table || f.source || (f.field || '').split('.')[0];
+      // Get the field name - strip table prefix if present
+      const field = f.field && f.field.includes('.') ? f.field.split('.')[1] : f.field;
+      // Look up the alias for this table from aliasMap
+      const alias = aliasMap[table] || sourceAlias;
+      const op = (f.op || '=').toLowerCase();
+      const sqlOp = {
+        'eq': '=', 'neq': '!=', 'lt': '<', 'lte': '<=', 'gt': '>', 'gte': '>=',
+        'in': 'IN', 'like': 'LIKE', 'contains': 'LIKE',
+      }[op] || op;
+
+      if (op === 'in') {
+        const vals = String(f.value).split(',').map(s => s.trim());
+        const placeholders = vals.map(v => qb.addParam(v));
+        whereClauses.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(field)} IN (${placeholders.join(', ')})`);
+      } else if (op === 'between') {
+        const [a, b] = String(f.value).split(',').map(s => s.trim());
+        const p1 = qb.addParam(a); const p2 = qb.addParam(b);
+        whereClauses.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(field)} BETWEEN ${p1} AND ${p2}`);
+      } else if (['contains', 'like'].includes(op)) {
+        const p = qb.addParam(`%${f.value}%`);
+        whereClauses.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(field)} LIKE ${p}`);
+      } else {
+        const p = qb.addParam(f.value);
+        whereClauses.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(field)} ${sqlOp} ${p}`);
+      }
+    };
+
+    (graph.filters || []).forEach(processFilter);
+    if (Array.isArray(additionalFilters)) {
+      additionalFilters.forEach(processFilter);
+    }
+
+    const opUpper = operation.toUpperCase();
+
+    // For preview mode, skip validation that requires actual data/filters
+    if (!previewOnly) {
+      // INSERT doesn't need filters, but UPDATE/DELETE do
+      if (opUpper !== 'INSERT' && whereClauses.length === 0) {
+        return res.status(400).json({ error: 'At least one filter is required for UPDATE/DELETE operations.' });
+      }
+    }
+
+    const whereClause = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+    let sql;
+
+    if (opUpper === 'INSERT') {
+      // For preview mode, show template INSERT with selected columns from outputFields
+      if (previewOnly) {
+        const allTables = [sourceTable, ...Array.from(joinedTables).filter(t => t !== sourceTable)];
+        const outputFields = graph.outputFields || {};
+
+        const sqlStatements = await Promise.all(allTables.map(async table => {
+          const cols = schema[table]?.columns || [];
+          const pks = schema[table]?.primaryKeys || [];
+          const selectedFields = outputFields[table] || [];
+
+          // If outputFields specifies columns for this table, use only those (excluding auto-increment PKs)
+          // Otherwise fall back to all non-auto-increment columns
+          let insertCols;
+          if (selectedFields.length > 0) {
+            insertCols = selectedFields.filter(colName => {
+              const col = cols.find(c => c.name === colName);
+              return col && !(pks.includes(colName) && col.isAutoIncrement);
+            });
+          } else {
+            insertCols = cols.filter(c => !(pks.includes(c.name) && c.isAutoIncrement)).map(c => c.name);
+          }
+
+          if (insertCols.length === 0) return null;
+
+          // Build placeholders with enum casting for PostgreSQL
+          const placeholders = await Promise.all(insertCols.map(async (colName, i) => {
+            const placeholder = dialect === 'mysql' ? '?' : `$${i + 1}`;
+            const colSchema = cols.find(c => c.name === colName);
+
+            // Check if column needs enum casting (enumOptions OR type is USER-DEFINED)
+            if (dialect === 'postgres' && (colSchema?.enumOptions || colSchema?.type === 'USER-DEFINED')) {
+              const enumTypeName = colSchema.udtName || await getEnumTypeName(table, colName);
+              if (enumTypeName) {
+                return `${placeholder}::text::${qb.sanitizeIdentifier(enumTypeName)}`;
+              }
+            }
+            return placeholder;
+          }));
+          return `INSERT INTO ${qb.sanitizeIdentifier(table)} (${insertCols.map(c => qb.sanitizeIdentifier(c)).join(', ')}) VALUES (${placeholders.join(', ')})`;
+        }));
+
+        return res.json({ operation: 'INSERT', sql: sqlStatements.filter(Boolean).join(';\n'), tables: allTables, previewOnly: true });
+      }
+
+      // INSERT: Create new record(s) in tables based on graph
+      if (!data || Object.keys(data).length === 0) {
+        return res.status(400).json({ error: 'No data provided for INSERT.' });
+      }
+
+      // Group fields by table (format: "table.column" or just "column" for source)
+      const tableData = {};
+      Object.entries(data).forEach(([key, val]) => {
+        let table, col;
+        if (key.includes('.')) {
+          [table, col] = key.split('.');
+        } else {
+          table = sourceTable;
+          col = key;
+        }
+        if (!tableData[table]) tableData[table] = {};
+        tableData[table][col] = val;
+      });
+
+      // Insert into each table that has data
+      const results = [];
+      for (const [table, cols] of Object.entries(tableData)) {
+        const columns = Object.keys(cols);
+        const values = Object.values(cols);
+
+        // Create fresh QueryBuilder for each table to avoid parameter index issues
+        const tableQb = new QueryBuilder(table, schema[table] || { columns: [], primaryKeys: [] }, dialect);
+        const tableSchema = schema[table] || { columns: [] };
+
+        // Build placeholders with enum type casting for PostgreSQL
+        const placeholders = [];
+        for (let idx = 0; idx < columns.length; idx++) {
+          const colName = columns[idx];
+          const p = tableQb.addParam(values[idx]);
+          const colSchema = tableSchema.columns.find(c => c.name === colName);
+
+          // Check if column needs enum casting (enumOptions OR type is USER-DEFINED)
+          if (dialect === 'postgres' && (colSchema?.enumOptions || colSchema?.type === 'USER-DEFINED')) {
+            const enumTypeName = colSchema.udtName || await getEnumTypeName(table, colName);
+            if (enumTypeName) {
+              placeholders.push(`${p}::text::${tableQb.sanitizeIdentifier(enumTypeName)}`);
+            } else {
+              placeholders.push(p);
+            }
+          } else {
+            placeholders.push(p);
+          }
+        }
+
+        const insertSql = `INSERT INTO ${tableQb.sanitizeIdentifier(table)} (${columns.map(c => tableQb.sanitizeIdentifier(c)).join(', ')}) VALUES (${placeholders.join(', ')})`;
+        const insertParams = [...tableQb.params];
+
+        if (dialect === 'mysql') {
+          const [rows] = await pool.query(insertSql, insertParams);
+          results.push({ table, insertId: rows.insertId, affectedRows: rows.affectedRows });
+        } else {
+          const pgResult = await pool.query(insertSql + ' RETURNING *', insertParams);
+          results.push({ table, insertedRow: pgResult.rows[0], affectedRows: pgResult.rowCount });
+        }
+      }
+
+      return res.json({ operation: 'INSERT', results });
+    } else if (opUpper === 'UPDATE') {
+      // For preview mode, show template UPDATE with multiple table support
+      if (previewOnly) {
+        // Group data by table for preview - but for PUT only use source table
+        const dataByTable = {};
+        Object.entries(data || {}).forEach(([key, val]) => {
+          let table, col;
+          if (key.includes('.')) {
+            const parts = key.split('.');
+            table = parts[0];
+            col = parts[parts.length - 1];
+          } else {
+            table = sourceTable;
+            col = key;
+          }
+
+          // For PUT (UPDATE), only collect source table columns
+          // For other operations, collect all tables
+          if (operation.toUpperCase() === 'UPDATE' && table !== sourceTable) {
+            return; // Skip non-source table columns for UPDATE
+          }
+
+          if (!dataByTable[table]) dataByTable[table] = {};
+          dataByTable[table][col] = val;
+        });
+
+        console.log('[DEBUG] Processed data by table:', JSON.stringify(dataByTable, null, 2));
+
+        const sqlStatements = [];
+
+        // Generate UPDATE for each table (but for UPDATE it will only be source table)
+        for (const [table, cols] of Object.entries(dataByTable)) {
+          const updateCols = Object.keys(cols);
+          const tableSchema = schema[table] || { columns: [] };
+          // Build SET clause with enum casting for PostgreSQL
+          const setTemplate = await Promise.all(updateCols.map(async c => {
+            const colSchema = tableSchema.columns.find(col => col.name === c);
+            // Check if column needs enum casting (enumOptions OR type is USER-DEFINED)
+            if (dialect === 'postgres' && (colSchema?.enumOptions || colSchema?.type === 'USER-DEFINED')) {
+              const enumTypeName = colSchema.udtName || await getEnumTypeName(table, c);
+              if (enumTypeName) {
+                return `${qb.sanitizeIdentifier(c)} = ?::text::${qb.sanitizeIdentifier(enumTypeName)}`;
+              }
+            }
+            return `${qb.sanitizeIdentifier(c)} = ?`;
+          }));
+          const setTemplateStr = setTemplate.join(', ');
+
+          if (table === sourceTable) {
+            // Source table: use full JOIN context for filtering
+            const filterTemplate = whereClauses.length > 0 ? whereClause : ' WHERE <filter_conditions>';
+            if (dialect === 'mysql') {
+              if (joinsSql) {
+                sqlStatements.push(`UPDATE ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${joinsSql} SET ${setTemplateStr}${filterTemplate}`);
+              } else {
+                sqlStatements.push(`UPDATE ${qb.sanitizeIdentifier(table)} SET ${setTemplateStr}${filterTemplate}`);
+              }
+            } else if (joinsSql) {
+              const fromTables = Array.from(joinedTables).filter(t => t !== sourceTable);
+              const fromClause = fromTables.map(t => `${qb.sanitizeIdentifier(t)} ${aliasMap[t]}`).join(', ');
+              const joinConditions = [];
+              joins.forEach(j => {
+                const fromTable = j.from && j.from.table ? j.from.table : j.fromTable || j.from;
+                const toTable = j.to && j.to.table ? j.to.table : j.toTable || j.to;
+                const fromField = j.from && j.from.field ? j.from.field : j.fromColumn || j.from_col;
+                const toField = j.to && j.to.field ? j.to.field : j.toColumn || j.to_col;
+                // For PostgreSQL UPDATE, use table name for source table (can't alias target table)
+                const fromRef = fromTable === sourceTable ? qb.sanitizeIdentifier(sourceTable) : aliasMap[fromTable];
+                const toRef = toTable === sourceTable ? qb.sanitizeIdentifier(sourceTable) : aliasMap[toTable];
+                joinConditions.push(`${fromRef}.${qb.sanitizeIdentifier(fromField)} = ${toRef}.${qb.sanitizeIdentifier(toField)}`);
+              });
+              // Replace source alias with table name in WHERE clauses for PostgreSQL UPDATE
+              const fixedWhereClauses = whereClauses.map(clause =>
+                clause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${qb.sanitizeIdentifier(sourceTable)}.`)
+              );
+              sqlStatements.push(`UPDATE ${qb.sanitizeIdentifier(table)} SET ${setTemplateStr} FROM ${fromClause} WHERE ${joinConditions.join(' AND ')}${fixedWhereClauses.length > 0 ? ' AND ' + fixedWhereClauses.join(' AND ') : ''}`);
+            } else {
+              // No joins - replace source alias with table name in WHERE for preview
+              const fixedFilterTemplate = filterTemplate.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${qb.sanitizeIdentifier(sourceTable)}.`);
+              sqlStatements.push(`UPDATE ${qb.sanitizeIdentifier(table)} SET ${setTemplateStr}${fixedFilterTemplate}`);
+            }
+          } else {
+            // Joined table: find join condition to filter rows
+            const joinForTable = joins.find(j =>
+              (j.from?.table || j.fromTable || j.from) === table ||
+              (j.to?.table || j.toTable || j.to) === table
+            );
+
+            if (joinForTable) {
+              const fromTable = joinForTable.from?.table || joinForTable.fromTable || joinForTable.from;
+              const toTable = joinForTable.to?.table || joinForTable.toTable || joinForTable.to;
+              const fromField = joinForTable.from?.field || joinForTable.fromColumn || joinForTable.from_col;
+              const toField = joinForTable.to?.field || joinForTable.toColumn || joinForTable.to_col;
+
+              // Determine which side of the join is the 'target' and which is the 'parent'
+              const isFrom = fromTable === table;
+              const targetCol = isFrom ? fromField : toField;
+              const parentTable = isFrom ? toTable : fromTable;
+              const parentCol = isFrom ? toField : fromField;
+
+              // Generate a subquery-based UPDATE for the preview
+              sqlStatements.push(
+                `UPDATE ${qb.sanitizeIdentifier(table)} SET ${setTemplateStr} ` +
+                `WHERE ${qb.sanitizeIdentifier(targetCol)} IN (` +
+                `SELECT ${qb.sanitizeIdentifier(parentCol)} FROM ${qb.sanitizeIdentifier(parentTable)} WHERE <filter_conditions>)`
+              );
+            }
+          }
+
+        }
+
+        return res.json({
+          operation: 'UPDATE',
+          sql: sqlStatements.filter(Boolean).join(';\n'),
+          previewOnly: true
+        });
+      }
+
+      if (!data || Object.keys(data).length === 0) {
+        return res.status(400).json({ error: 'No data provided for UPDATE.' });
+      }
+
+      // Group data by table for execution
+      const dataByTable = {};
+      Object.entries(data).forEach(([key, val]) => {
+        let table, col;
+        if (key.includes('.')) {
+          const parts = key.split('.');
+          table = parts[0];
+          col = parts[parts.length - 1];
+        } else {
+          table = sourceTable;
+          col = key;
+        }
+        if (!dataByTable[table]) dataByTable[table] = {};
+        dataByTable[table][col] = val;
+      });
+
+      // Execute UPDATE for each table
+      const results = [];
+      for (const [table, cols] of Object.entries(dataByTable)) {
+        try {
+          const updateCols = Object.keys(cols);
+          const tableQb = new QueryBuilder(table, schema[table] || { columns: [], primaryKeys: [] }, dialect);
+          const tableSchema = schema[table] || { columns: [] };
+
+          const setClauses = [];
+          // Build SET clauses with enum type lookup and basic type coercion
+          for (const col of updateCols) {
+            let val = cols[col];
+            const colSchema = tableSchema.columns.find(c => c.name === col);
+
+            // Coerce basic types for numeric/boolean columns to avoid PG casting errors
+            if ((dialect === 'postgres' || dialect === 'mysql') && colSchema?.type) {
+              const t = String(colSchema.type).toLowerCase();
+              if (/(integer|bigint|smallint|numeric|decimal)/.test(t)) {
+                if (typeof val === 'string') {
+                  if (/^\s*-?\d+(\.\d+)?\s*$/.test(val)) {
+                    val = Number(val);
+                  } else {
+                    throw new Error(`Invalid value for numeric column ${table}.${col}: "${val}"`);
+                  }
+                }
+              } else if (/boolean/.test(t)) {
+                if (typeof val === 'string') {
+                  const low = val.toLowerCase();
+                  if (low === 'true') val = true;
+                  else if (low === 'false') val = false;
+                  else throw new Error(`Invalid value for boolean column ${table}.${col}: "${val}"`);
+                }
+              }
+            }
+
+            const p = tableQb.addParam(val);
+
+          console.log(`[UPDATE EXECUTION] Column: ${col}, Value: ${val}`, {
+            hasEnumOptions: !!colSchema?.enumOptions,
+            enumOptions: colSchema?.enumOptions,
+            type: colSchema?.type,
+            udtName: colSchema?.udtName,
+              colSchemaKeys: colSchema ? Object.keys(colSchema) : 'NO SCHEMA'
+          });
+
+          // Check if column needs enum casting
+          // For PostgreSQL: check enumOptions OR if type is USER-DEFINED (enum)
+          if (dialect === 'postgres' && (colSchema?.enumOptions || colSchema?.type === 'USER-DEFINED')) {
+            const enumTypeName = colSchema.udtName || await getEnumTypeName(table, col);
+            console.log(`[UPDATE EXECUTION] Enum detected for ${col}, enumTypeName: ${enumTypeName}`);
+            if (enumTypeName) {
+              setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}::text::${tableQb.sanitizeIdentifier(enumTypeName)}`);
+            } else {
+              setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}`);
+            }
+          } else {
+            setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}`);
+          }
+          }
+
+        let sql;
+        // Parameter offset for WHERE placeholders (Postgres numbered params)
+        const paramOffset = tableQb.params.length;
+        const renumberPlaceholders = (s) => {
+          if (!s || dialect === 'mysql') return s;
+          return s.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + paramOffset}`);
+        };
+        if (table === sourceTable) {
+          // Source table: use full filter context with joins
+          if (dialect === 'mysql') {
+            if (joinsSql) {
+              sql = `UPDATE ${tableQb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${joinsSql} SET ${setClauses.join(', ')}${whereClause}`;
+            } else {
+              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')}${whereClause}`;
+            }
+          } else {
+            if (joinsSql) {
+              const fromTables = Array.from(joinedTables).filter(t => t !== sourceTable);
+              const fromClause = fromTables.map(t => `${tableQb.sanitizeIdentifier(t)} ${aliasMap[t]}`).join(', ');
+              const joinConditions = [];
+              joins.forEach(j => {
+                const fromTable = j.from?.table || j.fromTable || j.from;
+                const toTable = j.to?.table || j.toTable || j.to;
+                const fromField = j.from?.field || j.fromColumn || j.from_col;
+                const toField = j.to?.field || j.toColumn || j.to_col;
+                // For PostgreSQL UPDATE, use table name for source table (can't alias target table)
+                const fromRef = fromTable === sourceTable ? tableQb.sanitizeIdentifier(sourceTable) : aliasMap[fromTable];
+                const toRef = toTable === sourceTable ? tableQb.sanitizeIdentifier(sourceTable) : aliasMap[toTable];
+                joinConditions.push(`${fromRef}.${tableQb.sanitizeIdentifier(fromField)} = ${toRef}.${tableQb.sanitizeIdentifier(toField)}`);
+              });
+              // Replace source alias with table name in WHERE clauses for PostgreSQL UPDATE
+              let fixedWhereClauses = whereClauses.map(clause =>
+                clause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${tableQb.sanitizeIdentifier(sourceTable)}.`)
+              );
+              fixedWhereClauses = fixedWhereClauses.map(renumberPlaceholders);
+              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')} FROM ${fromClause} WHERE ${joinConditions.join(' AND ')}${fixedWhereClauses.length > 0 ? ' AND ' + fixedWhereClauses.join(' AND ') : ''}`;
+            } else {
+              // No joins - replace source alias with table name in WHERE
+              let fixedWhereClause = whereClause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${tableQb.sanitizeIdentifier(sourceTable)}.`);
+              fixedWhereClause = renumberPlaceholders(fixedWhereClause);
+              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')}${fixedWhereClause}`;
+            }
+          }
+        } else {
+          // Joined table: find the join condition
+          const joinForTable = joins.find(j =>
+            (j.from?.table || j.fromTable || j.from) === table || (j.to?.table || j.toTable || j.to) === table
+          );
+          if (joinForTable) {
+            const fromTable = joinForTable.from?.table || joinForTable.fromTable || joinForTable.from;
+            const toTable = joinForTable.to?.table || joinForTable.toTable || joinForTable.to;
+            const fromField = joinForTable.from?.field || joinForTable.fromColumn || joinForTable.from_col;
+            const toField = joinForTable.to?.field || joinForTable.toColumn || joinForTable.to_col;
+
+            if (dialect === 'mysql') {
+              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} JOIN ${tableQb.sanitizeIdentifier(sourceTable)} ON ${tableQb.sanitizeIdentifier(table)}.${tableQb.sanitizeIdentifier(toField)} = ${tableQb.sanitizeIdentifier(sourceTable)}.${tableQb.sanitizeIdentifier(fromField)} SET ${setClauses.join(', ')}${whereClause}`;
+            } else {
+              const renumWhereClauses = whereClauses.map(renumberPlaceholders);
+              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')} FROM ${tableQb.sanitizeIdentifier(sourceTable)} WHERE ${tableQb.sanitizeIdentifier(table)}.${tableQb.sanitizeIdentifier(toField)} = ${tableQb.sanitizeIdentifier(sourceTable)}.${tableQb.sanitizeIdentifier(fromField)}${renumWhereClauses.length > 0 ? ' AND ' + renumWhereClauses.join(' AND ') : ''}`;
+            }
+          }
+        }
+
+          if (sql) {
+            if (dialect === 'mysql') {
+            // MySQL uses '?' so params are simply concatenated
+            const [rows] = await pool.query(sql, [...tableQb.params, ...qb.params]);
+              results.push({ table, affectedRows: rows.affectedRows });
+            } else {
+              try {
+                // Postgres numbered params: combine SET params then WHERE params (renumbered above)
+                const pgResult = await pool.query(sql, [...tableQb.params, ...qb.params]);
+                results.push({ table, affectedRows: pgResult.rowCount });
+              } catch (e) {
+                return res.status(400).json({ error: e.message, sql, params: [...tableQb.params, ...qb.params] });
+              }
+            }
+          }
+        } catch (e) {
+          // Return validation/type errors early with context
+          return res.status(400).json({ error: e.message, sql: null });
+        }
+      }
+
+      return res.json({ operation: 'UPDATE', results });
+    } else {
+      // DELETE
+      // For preview mode, show template DELETE
+      if (previewOnly) {
+        const filterTemplate = whereClauses.length > 0 ? whereClause : ' WHERE <filter_conditions>';
+        let previewSql;
+        if (dialect === 'mysql') {
+          previewSql = `DELETE ${sourceAlias} FROM ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${joinsSql}${filterTemplate}`;
+        } else if (joinsSql) {
+          const usingTables = Array.from(joinedTables).filter(t => t !== sourceTable);
+          const usingClause = usingTables.map(t => `${qb.sanitizeIdentifier(t)} ${aliasMap[t]}`).join(', ');
+          const joinConditions = [];
+          joins.forEach(j => {
+            const fromTable = j.from && j.from.table ? j.from.table : j.fromTable || j.from;
+            const toTable = j.to && j.to.table ? j.to.table : j.toTable || j.to;
+            const fromField = j.from && j.from.field ? j.from.field : j.fromColumn || j.from_col;
+            const toField = j.to && j.to.field ? j.to.field : j.toColumn || j.to_col;
+            joinConditions.push(`${aliasMap[fromTable]}.${qb.sanitizeIdentifier(fromField)} = ${aliasMap[toTable]}.${qb.sanitizeIdentifier(toField)}`);
+          });
+          previewSql = `DELETE FROM ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias} USING ${usingClause} WHERE ${joinConditions.join(' AND ')}${whereClauses.length > 0 ? ' AND ' + whereClauses.join(' AND ') : ''}`;
+        } else {
+          previewSql = `DELETE FROM ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${filterTemplate}`;
+        }
+        return res.json({ operation: 'DELETE', sql: previewSql, previewOnly: true });
+      }
+
+      if (dialect === 'mysql') {
+        // MySQL: DELETE alias FROM table alias JOIN ...
+        sql = `DELETE ${sourceAlias} FROM ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${joinsSql}${whereClause}`;
+      } else {
+        // PostgreSQL: DELETE with USING clause for joins
+        if (joinsSql) {
+          const usingTables = Array.from(joinedTables).filter(t => t !== sourceTable);
+          const usingClause = usingTables.map(t => `${qb.sanitizeIdentifier(t)} ${aliasMap[t]}`).join(', ');
+          const joinConditions = [];
+          joins.forEach(j => {
+            const fromTable = j.from && j.from.table ? j.from.table : j.fromTable || j.from;
+            const toTable = j.to && j.to.table ? j.to.table : j.toTable || j.to;
+            const fromField = j.from && j.from.field ? j.from.field : j.fromColumn || j.from_col;
+            const toField = j.to && j.to.field ? j.to.field : j.toColumn || j.to_col;
+            joinConditions.push(`${aliasMap[fromTable]}.${qb.sanitizeIdentifier(fromField)} = ${aliasMap[toTable]}.${qb.sanitizeIdentifier(toField)}`);
+          });
+          sql = `DELETE FROM ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias} USING ${usingClause} WHERE ${joinConditions.join(' AND ')} AND ${whereClauses.join(' AND ')}`;
+        } else {
+          sql = `DELETE FROM ${qb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${whereClause}`;
+        }
+      }
+    }
+
+    const params = qb.params;
+
+    // Execute the query
+    let result;
+    if (dialect === 'mysql') {
+      const [rows] = await pool.query(sql, params);
+      result = { affectedRows: rows.affectedRows, sql, params };
+    } else {
+      const pgResult = await pool.query(sql, params);
+      result = { affectedRows: pgResult.rowCount, sql, params };
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Execute error:', error);
+    res.status(500).json({ error: error.message, sql: error.sql || '' });
+  }
+});
+
+/**
+ * POST /api/connections/:id/preview
+ * Preview query results with full graph context
  */
 router.post('/:id/preview', async (req, res) => {
   try {
@@ -463,10 +1107,10 @@ router.post('/:id/preview', async (req, res) => {
       let tbl = a.table;
       let fld = a.field;
       if (tableField.length === 2) { tbl = tableField[0]; fld = tableField[1]; }
-      
+
       // If tbl is an alias (not a real table), resolve it to the actual table name
       const actualTable = Object.keys(aliasMap).find(k => aliasMap[k] === tbl) || tbl;
-      
+
       let alias = a.as || a.alias || `${(a.type || a.func || 'agg').toLowerCase()}_${fld}`;
       // avoid alias colliding with table alias
       if (alias === getAlias(actualTable)) alias = `${alias}_agg`;
@@ -476,23 +1120,23 @@ router.post('/:id/preview', async (req, res) => {
     // Determine select list and build a human-friendly summary for the UI.
     const selects = [];
     const summaryParts = [];
-    
+
     // Check if we should skip individual fields (aggregations without groupBy)
     const hasAggs = (graph.aggregations || []).length > 0;
     const hasGroupBy = graph.groupBy && graph.groupBy.length > 0;
     const skipIndividualFields = hasAggs && !hasGroupBy;
-    
+
     if (graph.fields && Array.isArray(graph.fields) && graph.fields.length > 0 && !skipIndividualFields) {
       // Use explicit graph.fields and alias columns to avoid collisions (table_column)
       graph.fields.forEach((f) => {
         const s = String(f);
-        
+
         // Check if this field is an aggregation alias (skip it, will be added separately)
         const isAggAlias = aggs.some(a => a.as === s);
         if (isAggAlias) {
           return; // Skip aggregation aliases; they'll be handled separately
         }
-        
+
         if (s.includes('.')) {
           const [left, ...rest] = s.split('.');
           const right = rest.join('.');
@@ -699,11 +1343,11 @@ router.post('/:id/preview', async (req, res) => {
           // If there's a GROUP BY, check if this table's columns are covered
           const groupByFields = (graph.groupBy || []).map(g => String(g));
           const hasGroupBy = groupByFields.length > 0;
-          
+
           cols.forEach(col => {
             const aliasName = `${tableName}_${col}`;
             if (selectColumnNames.includes(aliasName)) return; // already present; skip
-            
+
             // If GROUP BY exists, only include columns that are in GROUP BY or skip non-source tables
             if (hasGroupBy) {
               const isInGroupBy = groupByFields.some(g => {
@@ -716,13 +1360,13 @@ router.post('/:id/preview', async (req, res) => {
                 }
                 return g === col;
               });
-              
+
               // Skip columns not in GROUP BY for non-source tables (to avoid MySQL only_full_group_by error)
               if (!isInGroupBy && tableName !== sourceTable) {
                 return; // skip this column
               }
             }
-            
+
             transformedSelects.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(col)} AS ${qb.sanitizeIdentifier(aliasName)}`);
             selectColumnNames.push(aliasName);
           });
@@ -770,13 +1414,13 @@ router.post('/:id/preview', async (req, res) => {
     // WHERE clauses (basic)
     const whereClauses = [];
     const params = [];
-    
+
     // Helper function to process a single filter
     const processFilter = (f) => {
       let table = f.table || f.source || (f.field || '').split('.')[0];
       // If table is an alias, resolve it to actual table name
       const resolvedTable = Object.keys(aliasMap).find(k => aliasMap[k] === table) || table;
-      
+
       if (!isTableInQuery(resolvedTable)) return; // Skip filters on tables not in query
       const field = f.field && f.field.includes('.') ? f.field.split('.')[1] : f.field;
       const alias = getAlias(resolvedTable || sourceTable);
@@ -808,10 +1452,10 @@ router.post('/:id/preview', async (req, res) => {
         whereClauses.push(`${qb.sanitizeIdentifier(alias)}.${qb.sanitizeIdentifier(field)} ${sqlOp} ${p}`);
       }
     };
-    
+
     // Process filters from graph definition
     (graph.filters || []).forEach(processFilter);
-    
+
     // Process additional filters from request body (runtime filters from "Try It")
     const additionalFilters = req.body && req.body.additionalFilters;
     if (Array.isArray(additionalFilters)) {
@@ -905,7 +1549,7 @@ router.post('/:id/preview', async (req, res) => {
         }
         return g;
       });
-      
+
       if (validGroupBy.length > 0) {
         // Ensure all selected non-aggregated columns are in GROUP BY
         for (const sel of finalSelects) {
