@@ -54,6 +54,8 @@ const APITester = ({
   const [bodyFields, setBodyFields] = useState({});
   const [nextAutoId, setNextAutoId] = useState(null);
   const [foreignKeyOptions, setForeignKeyOptions] = useState({});
+  // Bump this to force FK options reload after POST/PUT/DELETE
+  const [refreshFK, setRefreshFK] = useState(0);
   const [pageSize, setPageSize] = useState("");
   const [pageNumber, setPageNumber] = useState("1");
   const [orderBy, setOrderBy] = useState("");
@@ -387,7 +389,7 @@ const APITester = ({
       }
     });
     Promise.all(fetches).then(() => setForeignKeyOptions(options));
-  }, [schema, selectedTable, connectionId, endpoint]);
+  }, [schema, selectedTable, connectionId, endpoint, refreshFK]);
 
   const handleSend = async () => {
     if (!selectedTable && !endpoint?.graph) {
@@ -456,6 +458,8 @@ const APITester = ({
             data: parsedBody,
             additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
           });
+          // Refresh FK options after data change
+          setRefreshFK((v) => v + 1);
         } else if (endpointMethod === 'PUT') {
           // PUT: Update records using full graph context (joins included for filtering)
           const updateFields = buildPayloadFromBodyFields();
@@ -465,6 +469,8 @@ const APITester = ({
             data: updateFields,
             additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
           });
+          // Refresh FK options after data change
+          setRefreshFK((v) => v + 1);
         } else if (endpointMethod === 'DELETE') {
           // DELETE: Delete records using full graph context (joins included for filtering)
           if (additionalFilters.length === 0 && (!endpoint.graph?.filters || endpoint.graph.filters.length === 0)) {
@@ -477,6 +483,8 @@ const APITester = ({
             graph: endpoint.graph,
             additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
           });
+          // Refresh FK options after data change
+          setRefreshFK((v) => v + 1);
         }
       } else {
         // Standard table CRUD - original logic
@@ -544,13 +552,16 @@ const APITester = ({
             break;
           case "POST":
             result = await api.post(url, parsedBody);
+            setRefreshFK((v) => v + 1);
             break;
           case "PUT": {
             result = await api.put(url, parsedBody);
+            setRefreshFK((v) => v + 1);
             break;
           }
           case "DELETE":
             result = await api.delete(url);
+            setRefreshFK((v) => v + 1);
             break;
           default:
             throw new Error("Invalid operation");
