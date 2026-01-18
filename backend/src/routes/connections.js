@@ -533,7 +533,7 @@ router.post('/:id/import-sql', async (req, res) => {
       });
     }
   });
-
+//
   newSchema[tableName] = {
     columns,
     primaryKeys,
