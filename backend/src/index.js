@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const swaggerUi = require('swagger-ui-express');
-const { router: connectionsRouter, apiRouters } = require('./routes/connections');
+const { router: connectionsRouter, apiRouters, schemaCache, apiGenerators, dataStore } = require('./routes/connections');
 const autoIncrementRoute = require('./routes/autoIncrement');
 
 const app = express();
@@ -29,6 +29,27 @@ app.use('/api', autoIncrementRoute);
 const { router: endpointsRouter } = require('./routes/endpoints');
 app.use('/api/endpoints', endpointsRouter);
 
+// Schema Builder routes (DDL operations)
+const schemaBuilderRouter = require('./routes/schemaBuilder');
+app.use('/api/schema-builder', schemaBuilderRouter);
+
+  // Custom endpoint execution (for API Builder-created endpoints)
+  // GET /api/execute/:connectionId/:slug - execute a saved endpoint with graph support
+  app.get('/api/execute/:connectionId/:slug', async (req, res) => {
+    try {
+      const { connectionId, slug } = req.params;
+      const { endpoints } = require('./routes/endpoints');
+
+      // This won't work because endpoints is private in the module
+      // We need a different approach - get the endpoint from the request context
+      // For now, skip this implementation
+      res.status(501).json({ error: 'Not implemented yet' });
+    } catch (err) {
+      console.error('Error executing endpoint:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Dynamic API routes middleware
   // This intercepts /api/:connectionId/:table requests and routes to the appropriate API router
   app.use('/api/:connectionId', (req, res, next) => {
@@ -39,9 +60,12 @@ app.use('/api/endpoints', endpointsRouter);
       return next();
     }
 
+    console.log(`[ROUTER] Request for connectionId: ${connectionId}, url: ${req.url}, method: ${req.method}`);
+    
     const apiRouter = apiRouters.get(connectionId);
     
     if (!apiRouter) {
+      console.log(`[ROUTER] No apiRouter found for ${connectionId}. Available:`, Array.from(apiRouters.keys()));
       return res.status(404).json({ 
         error: `No API found for connection '${connectionId}'. Please introspect the database first.` 
       });

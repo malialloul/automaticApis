@@ -105,7 +105,7 @@ export default function TablesList({ setDataTable, filteredTables, openAddDialog
                                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
                                     <Chip
                                         icon={<ViewColumnIcon sx={{ fontSize: "14px !important" }} />}
-                                        label={`${tableInfo.columns.length} cols`}
+                                        label={`${tableInfo?.columns?.length || 0} cols`}
                                         size="small"
                                         sx={{ 
                                             height: 22, 

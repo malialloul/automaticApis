@@ -23,7 +23,8 @@
     "mysql2": "^3.9.7",
     "mongodb": "^5.7.0",
     "mssql": "^9.1.0",
-    "oracledb": "^5.3.0"
+    "oracledb": "^5.3.0",
+    "node-sql-parser": "^4.5.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

@@ -413,18 +413,19 @@ class QueryBuilder {
       throw new Error(`Invalid identifier (not a non-empty string): ${String(identifier)}`);
     }
 
-    // Only allow alphanumeric and underscore, must start with letter or underscore
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier)) {
-      throw new Error(`Invalid identifier: ${identifier}`);
+    // Allow any identifier that doesn't contain quotes or semicolons (SQL injection vectors)
+    // This permits special characters like hyphens, asterisks, etc. since we always quote identifiers
+    if (/[;"'`]/.test(identifier)) {
+      throw new Error(`Invalid identifier (contains forbidden characters): ${identifier}`);
     }
 
-    // Reject system tables/schemas (safely compute lowercase after validation)
+    // Reject system tables/schemas
     const lower = identifier.toLowerCase();
     if (lower.startsWith('pg_') || lower.startsWith('information_schema')) {
       throw new Error(`Cannot access system tables: ${identifier}`);
     }
 
-    // Always quote identifiers to allow reserved words and prevent SQL injection
+    // Always quote identifiers to allow reserved words, special chars, and prevent SQL injection
     if (this.dialect === 'mysql') {
       return `\`${identifier}\``;
     }

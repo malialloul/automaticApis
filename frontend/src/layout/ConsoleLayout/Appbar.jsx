@@ -15,7 +15,8 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
     const tabs = useMemo(
         () => [
             { label: "Dashboard", path: "/dashboard", disabled: false },
-            { label: "Schema", path: "/schema", disabled: !currentConnection },
+            { label: "Schema Builder", path: "/schema-builder", disabled: false },
+            { label: "Schema", path: "/schema", disabled: !currentConnection || (currentConnection?.type === 'local') },
             {
                 label: "ER Diagram",
                 path: "/er-diagram",
@@ -26,9 +27,12 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
         [currentConnection]
     );
 
-    const currentIndex = tabs.findIndex((t) =>
-        location.pathname.startsWith(t.path)
-    );
+    // Find current tab - sort by path length (longest first) to match /schema-builder before /schema
+    const currentIndex = (() => {
+        const sorted = [...tabs].sort((a, b) => b.path.length - a.path.length);
+        const matched = sorted.find(t => location.pathname.startsWith(t.path));
+        return matched ? tabs.indexOf(matched) : 0;
+    })();
     return <AppBar position="fixed" color="default" sx={{ boxShadow: 1, backdropFilter: "blur(10px)" }}>
         <Toolbar sx={{ gap: 2 }}>
             {/* Logo/Brand */}
@@ -52,7 +56,7 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
             </Box>
 
             <Tabs
-                value={currentIndex === -1 ? 0 : currentIndex}
+                value={currentIndex}
                 onChange={(_, idx) =>
                     !tabs[idx].disabled && navigate(tabs[idx].path)
                 }
@@ -60,6 +64,7 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
                 data-tour="nav-tabs"
             >
                 {tabs.map((t) => {
+                    const isSchemaLocalDisabled = t.path === '/schema' && currentConnection && currentConnection.type === 'local';
                     const tabEl = (
                         <Tab
                             key={t.path}
@@ -68,15 +73,24 @@ export const ConsoleLayoutBar = ({ darkMode, setDarkMode }) => {
                             sx={{ minHeight: 48, height: 48 }}
                         />
                     );
-                    return t.disabled ? (
-                        <Tooltip
-                            key={t.path}
-                            title="Connect a database first to access this feature"
-                        >
+                    if (!t.disabled) return tabEl;
+
+                    // Build tooltip content based on disabled reason
+                    const tooltipContent = isSchemaLocalDisabled ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <Typography variant="caption">Local database: manage your schema in Schema Builder.</Typography>
+                            <Button size="small" variant="contained" onClick={() => navigate('/schema-builder')} sx={{ textTransform: 'none' }}>
+                                Open Schema Builder
+                            </Button>
+                        </Box>
+                    ) : (
+                        'Connect a database first to access this feature'
+                    );
+
+                    return (
+                        <Tooltip key={t.path} title={tooltipContent} disableInteractive={false}>
                             <span>{tabEl}</span>
                         </Tooltip>
-                    ) : (
-                        tabEl
                     );
                 })}
             </Tabs>

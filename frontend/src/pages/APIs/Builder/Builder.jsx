@@ -95,6 +95,7 @@ const Builder = ({ onClose, editingEndpoint }) => {
     const seen = new Set(); // Track unique suggestions to avoid duplicates
     if (!schema) return suggestions;
     
+    // First, collect all explicitly defined FKs
     for (const t of tables) {
       const fks = schema[t]?.foreignKeys || [];
       for (const fk of fks) {
@@ -114,7 +115,8 @@ const Builder = ({ onClose, editingEndpoint }) => {
         }
       }
     }
-    // also check reverse (other table has FK to this)
+    
+    // Check reverse relationships too (other table has FK to this)
     for (const t of tables) {
       for (const other of tables) {
         if (t === other) continue;
@@ -136,6 +138,9 @@ const Builder = ({ onClose, editingEndpoint }) => {
         }
       }
     }
+
+
+
     return suggestions;
   };
 
@@ -177,7 +182,7 @@ const Builder = ({ onClose, editingEndpoint }) => {
     
     // Prevent deselecting required fields when method is POST
     if (!isAdding && endpointMethod === 'POST' && isRequiredField(tableName, fieldName)) {
-      setSnack({ msg: `Cannot deselect "${fieldName}" - it's a required field for POST. Change method to deselect.`, severity: 'warning' });
+      setSnack({ msg: `Cannot deselect "${fieldName}" - it's a required field for ${endpointMethod}. Change method to deselect.`, severity: 'warning' });
       return;
     }
     
@@ -222,8 +227,12 @@ const Builder = ({ onClose, editingEndpoint }) => {
     if (!col) return false;
     // Skip PKs - they're usually auto-generated
     if (pks.includes(col.name)) return false;
+    
     const isNullable = col.nullable === true || col.nullable === 'YES';
     const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+    
+    // Field is required if: not nullable AND no default
+    // FK columns are only required if they are non-nullable without default
     return !isNullable && !hasDefault;
   };
 
@@ -236,8 +245,11 @@ const Builder = ({ onClose, editingEndpoint }) => {
       required[table] = cols
         .filter(col => {
           if (pks.includes(col.name)) return false;
+          
           const isNullable = col.nullable === true || col.nullable === 'YES';
           const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+          
+          // Field is required if: not nullable AND no default
           return !isNullable && !hasDefault;
         })
         .map(c => c.name);
@@ -300,8 +312,9 @@ const Builder = ({ onClose, editingEndpoint }) => {
     }));
     setJoins(loadedJoins);
     
-    // Load filters
-    const loadedFilters = (graph.filters || []).map(f => ({
+    // Load filters - prefer _editState if available (has original table names)
+    const editState = graph._editState;
+    const loadedFilters = (editState?.filters || graph.filters || []).map(f => ({
       id: uid(),
       table: f.table || (f.field?.includes('.') ? f.field.split('.')[0] : graph.source?.table),
       field: f.field?.includes('.') ? f.field.split('.')[1] : f.field,
@@ -310,18 +323,18 @@ const Builder = ({ onClose, editingEndpoint }) => {
     }));
     setFilters(loadedFilters);
     
-    // Load groupBy
-    const loadedGroupBy = (graph.groupBy || []).map(g => {
+    // Load groupBy - prefer _editState if available
+    const loadedGroupBy = (editState?.groupBy || graph.groupBy || []).map(g => {
       if (typeof g === 'string' && g.includes('.')) {
         const [table, field] = g.split('.');
-        return { table, field };
+        return { id: uid(), table, field };
       }
-      return g;
+      return { id: uid(), ...g };
     });
     setGroupBy(loadedGroupBy);
     
-    // Load aggregations
-    const loadedAggregates = (graph.aggregations || []).map(a => ({
+    // Load aggregations - prefer _editState if available
+    const loadedAggregates = (editState?.aggregates || graph.aggregations || []).map(a => ({
       id: uid(),
       table: a.table || (a.field?.includes('.') ? a.field.split('.')[0] : graph.source?.table),
       field: a.field?.includes('.') ? a.field.split('.')[1] : a.field,
@@ -330,8 +343,8 @@ const Builder = ({ onClose, editingEndpoint }) => {
     }));
     setAggregates(loadedAggregates);
     
-    // Load having
-    const loadedHaving = (graph.having || []).map(h => ({
+    // Load having - prefer _editState if available
+    const loadedHaving = (editState?.having || graph.having || []).map(h => ({
       id: uid(),
       aggField: h.aggField || '',
       op: h.op || '>=',
@@ -533,20 +546,25 @@ const Builder = ({ onClose, editingEndpoint }) => {
 
     // Ensure the saved endpoint includes a canonical `graph` object so previews and Try-it
     // work consistently even if other parts of the code expect `endpoint.graph`.
+    // Store BOTH the formatted version (for execution) AND the original state (for editing)
     payload.graph = {
       source: payload.source,
       joins: payload.joins,
+      // Explicit list of all tables involved (source + joined tables) for POST/PUT body fields
+      tables: tables,
       filters: payload.filters,
       groupBy: payload.groupBy,
       aggregations: payload.aggregations,
       having: payload.having,
-      outputFields: outputFields, // Include selected fields for POST/PUT body
       fields: payload.fields,
-      filters: payload.filters,
-      groupBy: payload.groupBy,
-      aggregations: payload.aggregations,
-      having: payload.having,
-      outputFields: outputFields, // Include for editing
+      outputFields: outputFields,
+      // Store original unformatted data for editing (with table names, not aliases)
+      _editState: {
+        filters: filters.map(f => ({ ...f })),
+        groupBy: groupBy.map(g => ({ ...g })),
+        aggregates: aggregates.map(a => ({ ...a })),
+        having: having.map(h => ({ ...h })),
+      },
     };
     
     // Include connectionId so we can filter endpoints by connection

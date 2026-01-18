@@ -69,18 +69,26 @@ export const Sidebar = () => {
                 setReconnecting(true);
                 try {
                     const { introspectConnection, getSchema } = await import('../../../services/api');
-                    await introspectConnection(currentConnection.id, {
-                        host: currentConnection.host,
-                        port: parseInt(currentConnection.port, 10),
-                        database: currentConnection.database,
-                        user: currentConnection.user,
-                        password: currentConnection.password,
-                        type: currentConnection.type,
-                        uri: currentConnection.uri,
-                        encrypt: currentConnection.encrypt,
-                    });
-                    const schemaData = await getSchema(currentConnection.id);
-                    updateSchema(schemaData);
+                    
+                    // Skip introspection for local databases
+                    if (currentConnection.isLocal || currentConnection.type === 'local') {
+                        const schemaData = await getSchema(currentConnection.id);
+                        updateSchema(schemaData);
+                    } else {
+                        // Only introspect remote connections
+                        await introspectConnection(currentConnection.id, {
+                            host: currentConnection.host,
+                            port: parseInt(currentConnection.port, 10),
+                            database: currentConnection.database,
+                            user: currentConnection.user,
+                            password: currentConnection.password,
+                            type: currentConnection.type,
+                            uri: currentConnection.uri,
+                            encrypt: currentConnection.encrypt,
+                        });
+                        const schemaData = await getSchema(currentConnection.id);
+                        updateSchema(schemaData);
+                    }
                 } catch (err) {
                     console.error('Failed to auto-introspect on refresh:', err);
                 } finally {
@@ -94,7 +102,29 @@ export const Sidebar = () => {
     // Handle reconnecting to a saved connection with introspection
     const handleSelectConnection = async (connection) => {
         selectConnection(connection);
-        // Auto-introspect to load schema after server restart
+        
+        // Skip introspection for local databases
+        if (connection.isLocal || connection.type === 'local') {
+            setReconnecting(true);
+            try {
+                const { getSchema } = await import('../../../services/api');
+                const schemaData = await getSchema(connection.id);
+                updateSchema(schemaData);
+            } catch (err) {
+                console.error('Failed to load local schema:', err);
+                window.dispatchEvent(new CustomEvent('toast', { 
+                    detail: { 
+                        message: `Failed to load schema: ${err.message}`, 
+                        severity: 'error' 
+                    } 
+                }));
+            } finally {
+                setReconnecting(false);
+            }
+            return;
+        }
+        
+        // Auto-introspect remote connections to load schema after server restart
         setReconnecting(true);
         try {
             const { introspectConnection, getSchema } = await import('../../../services/api');

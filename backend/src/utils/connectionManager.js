@@ -276,6 +276,21 @@ class ConnectionManager {
   getInfo(connectionId) {
     return this.connections.get(connectionId);
   }
+
+  /**
+   * Get an existing connection pool without creating a new one
+   * @param {string} connectionId - Connection identifier
+   * @returns {Pool|null} Connection pool or null if not found
+   */
+  getExistingConnection(connectionId) {
+    const info = this.connections.get(connectionId);
+    if (!info) return null;
+    
+    if (info.type === 'mongodb') {
+      return { client: info.client, db: info.db };
+    }
+    return info.pool;
+  }
 }
 
 module.exports = new ConnectionManager();

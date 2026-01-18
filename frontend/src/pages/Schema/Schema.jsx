@@ -17,6 +17,7 @@ import {
   deleteRecord,
 } from "../../services/api";
 import { useConnection } from "../../_shared/database/useConnection";
+import { getConnection } from "../../utils/storage";
 import { AppContext } from "../../App";
 import { renderColumnControl, getNonFkPrimaryKeys } from "../../_shared/database/utils";
 import TablesList from './sections/TablesList';
@@ -27,10 +28,25 @@ import DeleteDialog from './dialogs/DeleteDialog';
 const Schema = () => {
   const {
     currentConnection,
+    selectConnection,
   } = useConnection();
   const { schema, refreshSchema, isLoadingSchema: loading } = useContext(AppContext);
 
   const connectionId = currentConnection?.id;
+    // Ensure a connection is selected: fallback to lastConnectionId if currentConnection is null
+    useEffect(() => {
+      try {
+        if (!currentConnection) {
+          const lastId = localStorage.getItem('lastConnectionId');
+          if (lastId) {
+            const conn = getConnection(lastId);
+            if (conn) {
+              selectConnection(conn);
+            }
+          }
+        }
+      } catch {}
+    }, [currentConnection, selectConnection]);
   const [searchTerm, setSearchTerm] = useState("");
   const [dataOpen, setDataOpen] = useState(false);
   const [dataTable, setDataTable] = useState(null);
@@ -73,12 +89,16 @@ const Schema = () => {
 
     // Prepare FK dropdowns
     const fks = (schema[tableName]?.foreignKeys || []);
+    console.log(`[FK DEBUG] Table ${tableName} has ${fks.length} foreign keys:`, fks);
     const fkOptions = {};
     for (const fk of fks) {
       try {
+        console.log(`[FK DEBUG] Fetching data from ${fk.foreignTable} for FK column ${fk.columnName}`);
         const rows = await listRecords(connectionId, fk.foreignTable);
+        console.log(`[FK DEBUG] Got ${rows?.length || 0} rows from ${fk.foreignTable}`);
         fkOptions[fk.columnName] = rows;
-      } catch {
+      } catch (err) {
+        console.error(`[FK DEBUG] Error fetching FK data from ${fk.foreignTable}:`, err);
         fkOptions[fk.columnName] = [];
       }
     }
@@ -139,10 +159,50 @@ const Schema = () => {
     setEditValues((v) => ({ ...v, [col]: value }));
   };
 
+  // Validate required fields for add/edit - returns array of missing field names
+  const validateRequiredFields = () => {
+    if (!schema || !dataTable) return [];
+    
+    const cols = schema[dataTable]?.columns || [];
+    const pks = schema[dataTable]?.primaryKeys || [];
+    const fks = schema[dataTable]?.foreignKeys || [];
+    const missingFields = [];
+    
+    cols.forEach(col => {
+      // Skip PKs (usually auto-generated) for add mode
+      if (editMode === "add" && pks.includes(col.name)) return;
+      
+      // Check if field is required (not nullable and no default)
+      // FK columns are only required if they are non-nullable without default
+      const isNullable = col.nullable === true || col.nullable === 'YES';
+      const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+      const isRequired = !isNullable && !hasDefault;
+      
+      if (isRequired) {
+        const value = editValues[col.name];
+        if (value === undefined || value === '' || value === null) {
+          missingFields.push(col.name);
+        }
+      }
+    });
+    
+    return missingFields;
+  };
+
   const handleEditSubmit = async () => {
     setEditLoading(true);
     setEditError(null);
     try {
+      // Validate required fields for add mode
+      if (editMode === "add") {
+        const missingFields = validateRequiredFields();
+        if (missingFields.length > 0) {
+          setEditError(`Missing required fields: ${missingFields.join(', ')}`);
+          setEditLoading(false);
+          return;
+        }
+      }
+      
       if (editMode === "add") {
         // Remove non-FK PKs from payload (allow PKs that are also FKs to be provided)
         const nonFkPks = getNonFkPrimaryKeys(schema, dataTable);
@@ -291,16 +351,14 @@ const Schema = () => {
 
   const renderInputField = (col) => {
     const value = editValues[col.name] ?? "";
-    // Check if column is a primary key and whether it's also a foreign key
-    const isPK = getNonFkPrimaryKeys(schema, dataTable).includes(col.name);
+    // Robust PK detection: support multiple schema shapes
+    const pks = (schema[dataTable]?.primaryKeys || schema[dataTable]?.primaryKey || []);
+    const isPrimaryKey = Array.isArray(pks) ? pks.includes(col.name) : false;
 
-    // Hide PK field in add mode only if it's a PK that is NOT also a FK
-    if (editMode === "add" && isPK) {
+    // Hide all primary key fields in both add and edit modes
+    if (isPrimaryKey) {
       return null;
     }
-
-    // In edit mode, disable PKs that are NOT FKs; allow editing PKs that are also FKs
-    const disabled = (editMode === "edit" && isPK);
 
     return renderColumnControl({
       col,
@@ -309,7 +367,7 @@ const Schema = () => {
       schema,
       tableName: dataTable,
       foreignKeyOptions,
-      disabled,
+      disabled: false,
     });
   };
 

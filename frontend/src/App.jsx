@@ -17,6 +17,7 @@ import ConsoleLayout from "./layout/ConsoleLayout/ConsoleLayout";
 import { PortalRoutes, PortalRoutesPaths } from "./routes/portal.routes";
 import { useLoadSchema } from "./_shared/database/useLoadSchema";
 import { TourProvider } from "./_shared/tour/TourProvider";
+import { LISTENERS } from "./_shared/listeners";
 
 export const AppContext = React.createContext({ schema: null, refreshSchema: null, isLoadingSchema: false, schemaError: null });
 
@@ -53,6 +54,27 @@ function App() {
     currentConnection,
   } = useConnection();
   const { data: schema, isLoading, error, refetch: refreshSchema } = useLoadSchema({ connectionId: currentConnection?.id });
+
+  // Listen for schema changes and refetch
+  React.useEffect(() => {
+    const handleSchemaChanged = (event) => {
+      const connectionId = event.detail?.connectionId;
+      // Only refetch if this is the current connection
+      if (connectionId === currentConnection?.id) {
+        refreshSchema();
+      } else if (connectionId) {
+        // If schema changed for a different connection (e.g., first local DB just imported), switch to it
+        try {
+          localStorage.setItem('lastConnectionId', connectionId);
+          window.dispatchEvent(new CustomEvent(LISTENERS.CONNECTION_UPDATED));
+        } catch {}
+      }
+    };
+
+    window.addEventListener('schema-changed', handleSchemaChanged);
+    return () => window.removeEventListener('schema-changed', handleSchemaChanged);
+  }, [currentConnection?.id, refreshSchema]);
+
   return (
     <AppContext.Provider value={{ schema, refreshSchema, isLoadingSchema: isLoading, schemaError: error }}>
       <Router>

@@ -104,6 +104,7 @@ export function renderColumnControl({
         size={size}
         options={opts}
         loading={loading}
+        disabled={disabled}
         noOptionsText={loading ? "Loading..." : "No options"}
         getOptionLabel={(row) => {
           const primary = row[valKey] ?? row[Object.keys(row || {})[0]] ?? "";
@@ -144,6 +145,8 @@ export function renderColumnControl({
             : "";
           return String(ov) === String(vv);
         }}
+        fullWidth={fullWidth}
+        label={col.name}
         renderOption={(props, row) => {
           const { fullWidth, size, indicator, ...rest } = props;
           return (

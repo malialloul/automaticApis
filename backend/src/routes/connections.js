@@ -11,6 +11,13 @@ const router = express.Router();
 const schemaCache = new Map();
 const apiRouters = new Map();
 const apiGenerators = new Map();
+// Store data for local databases: { connectionId: { tableName: [rows] } }
+const dataStore = new Map();
+
+// Helper: determine if a connection id refers to a local (Schema Builder) database
+function isLocalConnectionId(id) {
+  return typeof id === 'string' && (id.startsWith('db_') || id.startsWith('local_'));
+}
 
 // Helper to choose sensible default port per DB type
 function getDefaultPort(type) {
@@ -83,6 +90,36 @@ router.post('/:id/introspect', async (req, res) => {
     const connectionId = req.params.id;
     const { host, port, database, user, password, type, uri, encrypt } = req.body;
 
+    // For local databases, introspect is a no-op (schema is managed via POST /api/connections/:id/schema)
+    if (type === 'local' || isLocalConnectionId(connectionId)) {
+      console.log(`Introspect called for local database: ${connectionId}`);
+      const schema = schemaCache.get(connectionId);
+      if (!schema) {
+        console.log(`No schema found in cache for local database ${connectionId}. Available connections:`, Array.from(schemaCache.keys()));
+        return res.status(400).json({
+          error: 'No schema defined for this local database. Use Schema Builder to define tables.'
+        });
+      }
+
+      const tableCount = Object.keys(schema).length;
+      let relationshipCount = 0;
+      for (const table of Object.values(schema)) {
+        relationshipCount += (table.foreignKeys?.length || 0) + (table.reverseForeignKeys?.length || 0);
+      }
+
+      console.log(`Introspect returned for local database ${connectionId}:`, { tableCount, relationshipCount });
+      return res.json({
+        success: true,
+        message: 'Local database schema retrieved',
+        connectionId,
+        stats: {
+          tables: tableCount,
+          relationships: relationshipCount,
+          endpoints: tableCount * 5 + relationshipCount,
+        },
+      });
+    }
+
     if ((type || 'postgres').toLowerCase() === 'mongodb') {
       if (!uri && !host) {
         return res.status(400).json({ error: 'Missing required fields: host or uri' });
@@ -120,7 +157,7 @@ router.post('/:id/introspect', async (req, res) => {
     schemaCache.set(connectionId, schema);
 
     // Generate API routes
-    const apiGenerator = new APIGenerator(connectionId, pool, schema, info?.type || 'postgres');
+    const apiGenerator = new APIGenerator(connectionId, pool, schema, info?.type || 'postgres', dataStore);
     const apiRouter = apiGenerator.generateRoutes();
     apiRouters.set(connectionId, apiRouter);
     apiGenerators.set(connectionId, apiGenerator);
@@ -196,6 +233,113 @@ router.post('/:id/introspect', async (req, res) => {
 });
 
 /**
+ * POST /api/connections/:id/schema
+ * Save/store a schema for a connection (used for local databases from Schema Builder)
+ */
+router.post('/:id/schema', (req, res) => {
+  try {
+    const connectionId = req.params.id;
+    const { schema, tables } = req.body;
+
+    console.log(`POST /connections/${connectionId}/schema - Incoming request`, {
+      schemaType: typeof schema,
+      schemaKeys: schema ? Object.keys(schema).length : 'null',
+      tablesType: typeof tables,
+      tablesLength: Array.isArray(tables) ? tables.length : 'not an array'
+    });
+
+    // Accept either 'schema' object or 'tables' array
+    const dataToStore = schema || { tables };
+
+    if (!dataToStore) {
+      return res.status(400).json({ error: 'Missing schema or tables in request body' });
+    }
+
+    // Normalize schema: ensure each table has foreignKeys and reverseForeignKeys arrays
+    const normalizedSchema = {};
+    for (const [tableName, tableData] of Object.entries(dataToStore)) {
+      // Normalize foreign keys: convert { column, refTable, refColumn } to { columnName, foreignTable, foreignColumn }
+      const normalizedFks = (tableData.foreignKeys || []).map(fk => ({
+        columnName: fk.columnName || fk.column,
+        foreignTable: fk.foreignTable || fk.refTable,
+        foreignColumn: fk.foreignColumn || fk.refColumn,
+      }));
+
+      normalizedSchema[tableName] = {
+        ...tableData,
+        foreignKeys: normalizedFks,
+        reverseForeignKeys: tableData.reverseForeignKeys || [],
+        columns: tableData.columns || [],
+        primaryKeys: tableData.primaryKeys || [],
+        indexes: tableData.indexes || [],
+      };
+    }
+
+    // Store schema in cache
+    schemaCache.set(connectionId, normalizedSchema);
+    console.log(`Schema cached for ${connectionId}`, { cachedKeys: Object.keys(normalizedSchema).length });
+
+    // Create an APIGenerator for this local database so it has __generated_endpoints
+    // Local databases are identified by IDs starting with 'db_' or 'local_'
+    if (isLocalConnectionId(connectionId)) {
+      try {
+        console.log(`[SCHEMA] Creating APIGenerator for local database ${connectionId}`);
+        console.log(`[SCHEMA] dataStore has ${connectionId}:`, dataStore.has(connectionId), dataStore.get(connectionId) ? Object.keys(dataStore.get(connectionId)) : 'none');
+        const apiGenerator = new APIGenerator(connectionId, null, normalizedSchema, 'local', dataStore);
+        const apiRouter = apiGenerator.generateRoutes();
+        apiGenerators.set(connectionId, apiGenerator);
+        // Register the router so it's accessible via /api/:connectionId paths
+        apiRouters.set(connectionId, apiRouter);
+        console.log(`[SCHEMA] APIGenerator and router registered for ${connectionId}. Tables:`, Object.keys(normalizedSchema));
+      } catch (err) {
+        console.warn('Failed to generate API routes for local database:', err);
+        // Don't fail the request, just warn
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Schema stored successfully',
+      connectionId
+    });
+  } catch (error) {
+    console.error('Failed to store schema:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/connections/:id/schema
+ * Delete a stored schema (for cleaning up local databases)
+ */
+router.delete('/:id/schema', (req, res) => {
+  try {
+    const connectionId = req.params.id;
+
+    if (schemaCache.has(connectionId)) {
+      schemaCache.delete(connectionId);
+
+      // Also clean up APIGenerator and router for local databases
+      if (isLocalConnectionId(connectionId)) {
+        apiGenerators.delete(connectionId);
+        apiRouters.delete(connectionId);
+      }
+
+      res.json({
+        success: true,
+        message: 'Schema deleted successfully',
+        connectionId
+      });
+    } else {
+      res.status(404).json({ error: 'Schema not found' });
+    }
+  } catch (error) {
+    console.error('Failed to delete schema:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * GET /api/connections/:id/schema
  * Get cached schema for a connection
  */
@@ -210,6 +354,381 @@ router.get('/:id/schema', (req, res) => {
   }
 
   res.json(schema);
+});
+
+/**
+ * POST /api/connections/:id/import-sql
+ * Parse a full SQL script (CREATE TABLE, INSERT) and populate local schema/data
+ * Only supported for local (Schema Builder) connections: ids starting with db_ or local_
+ */
+router.post('/:id/import-sql', async (req, res) => {
+  try {
+    const connectionId = req.params.id;
+    const { sql, dialect = 'PostgreSQL' } = req.body || {};
+    if (!isLocalConnectionId(connectionId)) {
+      return res.status(400).json({ error: 'SQL import is only supported for local databases' });
+    }
+    if (!sql || typeof sql !== 'string') {
+      return res.status(400).json({ error: 'Missing SQL script in request body' });
+    }
+
+    let Parser;
+    try {
+      ({ Parser } = require('node-sql-parser'));
+    } catch (e) {
+      return res.status(500).json({ error: 'node-sql-parser not installed on server' });
+    }
+    const parser = new Parser();
+
+    // Normalize dialect to values accepted by node-sql-parser
+    const normalizeDialect = (d) => {
+      const s = String(d || '').toLowerCase();
+      if (s === 'postgres' || s === 'postgresql') return 'postgresql';
+      if (s === 'mysql') return 'mysql';
+      if (s === 'sqlite') return 'sqlite';
+      return 'postgresql';
+    };
+    const dbOpt = normalizeDialect(dialect);
+
+    // Helpers to strip comments and split into individual statements safely
+    const stripComments = (s) => s
+      .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
+      .replace(/--.*$/gm, ''); // line comments
+
+    const splitStatements = (s) => {
+      const stmts = [];
+      let cur = '';
+      let inStr = false;
+      let strCh = '';
+      let depth = 0;
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        const next2 = s.slice(i, i + 2);
+        // Enter/exit string
+        if (!inStr && (ch === '"' || ch === "'")) { inStr = true; strCh = ch; cur += ch; continue; }
+        if (inStr) { cur += ch; if (ch === strCh) { inStr = false; } continue; }
+        // Track parentheses depth
+        if (ch === '(') { depth++; cur += ch; continue; }
+        if (ch === ')') { depth--; cur += ch; continue; }
+        // Statement boundary on semicolon at depth 0
+        if (ch === ';' && depth === 0) { if (cur.trim()) stmts.push(cur.trim()); cur = ''; continue; }
+        cur += ch;
+      }
+      if (cur.trim()) stmts.push(cur.trim());
+      return stmts;
+    };
+
+    // Normalize newlines and trim; split into statements
+    const normalizedSql = String(sql).replace(/\r\n/g, '\n').trim();
+    const rawStatements = splitStatements(normalizedSql);
+    let ast = [];
+    const parseErrors = [];
+    if (rawStatements.length === 0) {
+      // Retry after stripping comments
+      const cleaned = splitStatements(stripComments(normalizedSql));
+      rawStatements.push(...cleaned);
+    }
+    // Parse each statement individually; tolerate failures
+    rawStatements.forEach(stmtText => {
+      try {
+        const out = parser.astify(stmtText, { database: dbOpt });
+        if (Array.isArray(out)) ast.push(...out); else ast.push(out);
+      } catch (e) {
+        // Fallback: try alternate dialect if parse fails
+        const alt = dbOpt === 'postgresql' ? 'mysql' : 'postgresql';
+        try {
+          const outAlt = parser.astify(stmtText, { database: alt });
+          if (Array.isArray(outAlt)) ast.push(...outAlt); else ast.push(outAlt);
+        } catch (e2) {
+          parseErrors.push({ statement: stmtText.slice(0, 100), error: e.message });
+        }
+      }
+    });
+    if (ast.length === 0 && parseErrors.length > 0) {
+      return res.status(400).json({ error: `Failed to parse SQL: ${parseErrors[0].error}` });
+    }
+
+    // Start from existing schema if present
+    const existing = schemaCache.get(connectionId) || {};
+    const newSchema = { ...existing };
+    const insertedCounts = {};
+    const updatedCounts = {};
+
+    // Helper: ensure dataStore initialized for this connection and table
+    const ensureTableRows = (tableName) => {
+      if (!dataStore.has(connectionId)) dataStore.set(connectionId, {});
+      const connData = dataStore.get(connectionId);
+      if (!connData[tableName]) connData[tableName] = [];
+      return connData[tableName];
+    };
+
+    // Helper: normalize CREATE TABLE to app schema format
+   const upsertTableSchema = (stmt) => {
+  const tableName = stmt.table?.[0]?.table;
+  if (!tableName) return;
+
+  const columns = [];
+  const primaryKeys = [];
+  const foreignKeys = [];
+
+  const safeValue = (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'string' || typeof v === 'number') return v;
+    return JSON.stringify(v);
+  };
+
+  const normalizeDefault = (dv) => {
+    if (!dv) return null;
+    if (typeof dv === 'string' || typeof dv === 'number') return dv;
+    if (dv.type === 'function') return dv.name;
+    if (dv.type === 'number') return dv.value;
+    if (dv.type === 'string') return dv.value;
+    return JSON.stringify(dv);
+  };
+
+  (stmt.create_definitions || []).forEach(def => {
+
+    /* ---------- COLUMNS ---------- */
+    if (def.resource === 'column') {
+      const name = def.column?.column;
+      const dt = def.definition?.dataType || '';
+      const nullable = def.nullable?.type !== 'not null';
+      const unique = def.unique === 'unique';
+
+      if (def.primary_key === 'primary key') {
+        if (!primaryKeys.includes(name)) primaryKeys.push(name);
+      }
+
+      const isAuto =
+        /\bserial\b|\bbigserial\b/i.test(String(dt)) ||
+        /nextval\(/i.test(String(def.definition?.default_val || ''));
+
+      const defVal = normalizeDefault(def.default_val?.value);
+
+      columns.push({
+        name: safeValue(name),
+        type: safeValue(String(dt).toLowerCase()),
+        nullable,
+        unique,
+        default: safeValue(defVal),
+        isAutoIncrement: isAuto,
+        isPrimaryKey: def.primary_key === 'primary key'
+      });
+    }
+
+    /* ---------- FOREIGN KEYS ---------- */
+    if (def.resource === 'constraint' && def.constraint_type === 'FOREIGN KEY') {
+      const fkCols = def.definition || [];
+      const refDef = def.reference_definition;
+
+      const refTable = refDef?.table?.[0]?.table;
+      const refCols = refDef?.definition || [];
+
+      fkCols.forEach((col, i) => {
+        foreignKeys.push({
+          columnName: safeValue(col.column),
+          foreignTable: safeValue(refTable),
+          foreignColumn: safeValue(refCols[i]?.column || refCols[0]?.column || 'id'),
+        });
+      });
+    }
+  });
+
+  newSchema[tableName] = {
+    columns,
+    primaryKeys,
+    foreignKeys,
+    indexes: newSchema[tableName]?.indexes || []
+  };
+};
+
+
+
+
+    // Helper: DROP TABLE handler (clear schema and data)
+    const handleDropTable = (stmt) => {
+      const tableName = stmt.table?.[0]?.table;
+      if (!tableName) return;
+      delete newSchema[tableName];
+      if (dataStore.has(connectionId)) {
+        const connData = dataStore.get(connectionId);
+        delete connData[tableName];
+      }
+    };
+
+    // Helper: CREATE INDEX handler
+    const handleCreateIndex = (stmt) => {
+      const tableName = stmt.table?.[0]?.table;
+      const index = stmt.index || stmt.definition || null;
+      if (!tableName || !newSchema[tableName]) return;
+      const cols = (index?.columns || stmt.columns || []).map(c => c.column || c?.expr?.column).filter(Boolean);
+      const idxName = index?.name || stmt.index_name || stmt.name || `${tableName}_${(cols.join('_') || 'idx')}`;
+      const unique = !!(stmt.unique || index?.unique);
+      const idxObj = { name: idxName, columns: cols, unique };
+      const arr = newSchema[tableName].indexes || [];
+      arr.push(idxObj);
+      newSchema[tableName].indexes = arr;
+    };
+
+    // First pass: handle drops and build/merge schema from CREATE TABLE statements and indexes
+    ast.forEach(stmt => {
+      if (stmt.type === 'drop') handleDropTable(stmt);
+      else if (stmt.type === 'create') {
+        // Distinguish table vs index/function/procedure
+        const kw = (stmt.keyword || '').toLowerCase();
+        if (kw === 'table' || !kw) {
+          upsertTableSchema(stmt);
+        } else if (kw === 'index' || stmt.resource === 'index') {
+          handleCreateIndex(stmt);
+        } else {
+          // function/procedure/event: ignore for local import
+        }
+      }
+    });
+
+    // Cache schema and ensure routes
+    schemaCache.set(connectionId, newSchema);
+    try {
+      const apiGenerator = new APIGenerator(connectionId, null, newSchema, 'local', dataStore);
+      const apiRouter = apiGenerator.generateRoutes();
+      apiGenerators.set(connectionId, apiGenerator);
+      apiRouters.set(connectionId, apiRouter);
+      console.log(`[IMPORT-SQL] Registered API router for ${connectionId}. Tables:`, Object.keys(newSchema));
+    } catch (e) {
+      // If route generation fails, still try to insert data
+      console.warn('Route generation failed during import-sql:', e?.message || e);
+    }
+
+    // Helper: value coercion
+    const getNodeValue = (v) => {
+      if (!v) return null;
+      if (v.value !== undefined) return v.value;
+      if (v.raw !== undefined) {
+        const raw = v.raw;
+        if (/^NULL$/i.test(raw)) return null;
+        if (/^(TRUE|FALSE)$/i.test(raw)) return /^TRUE$/i.test(raw);
+        if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+        return String(raw).replace(/^'|"|`|\(|\)$/g, '').trim();
+      }
+      return null;
+    };
+
+    // Helper: where evaluator for simple binary expressions
+    const evalWhere = (row, node) => {
+      if (!node) return true;
+      if (node.type === 'binary_expr') {
+        const op = (node.operator || '').toUpperCase();
+        if (op === 'AND' || op === 'OR') {
+          const left = evalWhere(row, node.left);
+          const right = evalWhere(row, node.right);
+          return op === 'AND' ? (left && right) : (left || right);
+        }
+        // Left should be column ref
+        const col = node.left?.column || node.left?.expr?.column || node.left?.value || node.left?.raw;
+        const val = getNodeValue(node.right);
+        const rowVal = row[String(col)];
+        switch (op) {
+          case '=': return String(rowVal) === String(val);
+          case '!=':
+          case '<>': return String(rowVal) !== String(val);
+          case '>': return Number(rowVal) > Number(val);
+          case '>=': return Number(rowVal) >= Number(val);
+          case '<': return Number(rowVal) < Number(val);
+          case '<=': return Number(rowVal) <= Number(val);
+          case 'LIKE': return String(rowVal).includes(String(val).replace(/%/g, ''));
+          default: return false;
+        }
+      }
+      return true;
+    };
+
+    // Second pass: execute INSERT/UPDATE statements into dataStore
+    ast.forEach(stmt => {
+      if (stmt.type !== 'insert') return;
+      const tableName = stmt.table?.[0]?.table;
+      if (!tableName) return;
+      const tableSchema = newSchema[tableName] || { columns: [], primaryKeys: [] };
+      const rowsArr = ensureTableRows(tableName);
+
+      // Robust column extraction: handle different AST shapes
+      let cols = (stmt.columns || []).map(c => {
+        if (typeof c === 'string') return c;
+        return c?.column || c?.expr?.column || c?.name;
+      }).filter(Boolean);
+
+      (stmt.values || []).forEach(row => {
+        const values = row?.value || [];
+        const obj = {};
+
+        if (!cols || cols.length === 0) {
+          // No explicit columns list: map in order of table columns
+          const allCols = (tableSchema.columns || []).map(c => c.name);
+          for (let idx = 0; idx < values.length; idx++) {
+            const v = values[idx];
+            const colName = allCols[idx];
+            if (!colName) continue;
+            obj[colName] = v && v.value !== undefined ? v.value : (v?.raw ?? null);
+          }
+        } else {
+          // Use explicit columns list; if a column name is missing, try fallback to schema order
+          const allCols = (tableSchema.columns || []).map(c => c.name);
+          for (let idx = 0; idx < values.length; idx++) {
+            const v = values[idx];
+            const explicitName = cols[idx];
+            const colName = explicitName || allCols[idx] || null;
+            if (!colName) continue;
+            obj[colName] = v && v.value !== undefined ? v.value : (v?.raw ?? null);
+          }
+        }
+
+        // Auto-increment PK if needed
+        if ((tableSchema.primaryKeys || []).length === 1) {
+          const pk = tableSchema.primaryKeys[0];
+          if (obj[pk] === undefined || obj[pk] === null) {
+            const maxId = Math.max(...rowsArr.map(r => parseInt(r[pk]) || 0), 0);
+            obj[pk] = maxId + 1;
+          }
+        }
+
+        rowsArr.push(obj);
+        insertedCounts[tableName] = (insertedCounts[tableName] || 0) + 1;
+      });
+    });
+
+    // Apply UPDATE statements
+    ast.forEach(stmt => {
+      if (stmt.type !== 'update') return;
+      const tableName = stmt.table?.[0]?.table;
+      if (!tableName) return;
+      const rowsArr = ensureTableRows(tableName);
+      const sets = (stmt.set || []).map(s => ({
+        col: s.column?.column || s.column?.expr?.column || s.column?.name,
+        val: getNodeValue(s.value)
+      })).filter(s => s.col);
+      let updated = 0;
+      for (let i = 0; i < rowsArr.length; i++) {
+        if (evalWhere(rowsArr[i], stmt.where)) {
+          sets.forEach(s => { rowsArr[i][s.col] = s.val; });
+          updated++;
+        }
+      }
+      if (updated) updatedCounts[tableName] = (updatedCounts[tableName] || 0) + updated;
+    });
+
+    const totalTables = Object.keys(newSchema).length;
+    const totalRows = Object.values(insertedCounts).reduce((a, b) => a + b, 0);
+    const totalUpdated = Object.values(updatedCounts).reduce((a, b) => a + b, 0);
+    // Diagnostics: log dataStore summary for this connection
+    try {
+      const connData = dataStore.get(connectionId) || {};
+      const summary = Object.fromEntries(Object.entries(connData).map(([t, rows]) => [t, rows.length]));
+      console.log(`[IMPORT-SQL] Summary for ${connectionId}: tables=${totalTables}, insertedRows=${totalRows}, updatedRows=${totalUpdated}, dataStoreCounts=`, summary);
+    } catch { }
+    return res.json({ success: true, connectionId, tables: totalTables, inserted: insertedCounts, totalRows, updated: updatedCounts, totalUpdated, parseErrors });
+  } catch (error) {
+    console.error('Failed to import SQL:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 /**
@@ -368,6 +887,22 @@ router.post('/:id/execute', async (req, res) => {
     const schema = schemaCache.get(connectionId);
     if (!schema) {
       return res.status(404).json({ error: 'Schema not found. Please introspect the database first.' });
+    }
+
+    // Handle local databases (db_* or local_*) - execute in-memory via APIGenerator
+    if (isLocalConnectionId(connectionId)) {
+      const apiGenerator = apiGenerators.get(connectionId);
+      if (!apiGenerator) {
+        return res.status(404).json({ error: 'API Generator not found for local database' });
+      }
+
+      try {
+        const result = await apiGenerator.executeWrite(operation.toUpperCase(), graph, data, { previewOnly, additionalFilters });
+        return res.json(result);
+      } catch (err) {
+        console.error('Local DB execute error:', err);
+        return res.status(500).json({ error: err.message });
+      }
     }
 
     // Debug: Log the users table schema
@@ -815,96 +1350,96 @@ router.post('/:id/execute', async (req, res) => {
 
             const p = tableQb.addParam(val);
 
-          console.log(`[UPDATE EXECUTION] Column: ${col}, Value: ${val}`, {
-            hasEnumOptions: !!colSchema?.enumOptions,
-            enumOptions: colSchema?.enumOptions,
-            type: colSchema?.type,
-            udtName: colSchema?.udtName,
+            console.log(`[UPDATE EXECUTION] Column: ${col}, Value: ${val}`, {
+              hasEnumOptions: !!colSchema?.enumOptions,
+              enumOptions: colSchema?.enumOptions,
+              type: colSchema?.type,
+              udtName: colSchema?.udtName,
               colSchemaKeys: colSchema ? Object.keys(colSchema) : 'NO SCHEMA'
-          });
+            });
 
-          // Check if column needs enum casting
-          // For PostgreSQL: check enumOptions OR if type is USER-DEFINED (enum)
-          if (dialect === 'postgres' && (colSchema?.enumOptions || colSchema?.type === 'USER-DEFINED')) {
-            const enumTypeName = colSchema.udtName || await getEnumTypeName(table, col);
-            console.log(`[UPDATE EXECUTION] Enum detected for ${col}, enumTypeName: ${enumTypeName}`);
-            if (enumTypeName) {
-              setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}::text::${tableQb.sanitizeIdentifier(enumTypeName)}`);
+            // Check if column needs enum casting
+            // For PostgreSQL: check enumOptions OR if type is USER-DEFINED (enum)
+            if (dialect === 'postgres' && (colSchema?.enumOptions || colSchema?.type === 'USER-DEFINED')) {
+              const enumTypeName = colSchema.udtName || await getEnumTypeName(table, col);
+              console.log(`[UPDATE EXECUTION] Enum detected for ${col}, enumTypeName: ${enumTypeName}`);
+              if (enumTypeName) {
+                setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}::text::${tableQb.sanitizeIdentifier(enumTypeName)}`);
+              } else {
+                setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}`);
+              }
             } else {
               setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}`);
             }
-          } else {
-            setClauses.push(`${tableQb.sanitizeIdentifier(col)} = ${p}`);
-          }
           }
 
-        let sql;
-        // Parameter offset for WHERE placeholders (Postgres numbered params)
-        const paramOffset = tableQb.params.length;
-        const renumberPlaceholders = (s) => {
-          if (!s || dialect === 'mysql') return s;
-          return s.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + paramOffset}`);
-        };
-        if (table === sourceTable) {
-          // Source table: use full filter context with joins
-          if (dialect === 'mysql') {
-            if (joinsSql) {
-              sql = `UPDATE ${tableQb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${joinsSql} SET ${setClauses.join(', ')}${whereClause}`;
-            } else {
-              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')}${whereClause}`;
-            }
-          } else {
-            if (joinsSql) {
-              const fromTables = Array.from(joinedTables).filter(t => t !== sourceTable);
-              const fromClause = fromTables.map(t => `${tableQb.sanitizeIdentifier(t)} ${aliasMap[t]}`).join(', ');
-              const joinConditions = [];
-              joins.forEach(j => {
-                const fromTable = j.from?.table || j.fromTable || j.from;
-                const toTable = j.to?.table || j.toTable || j.to;
-                const fromField = j.from?.field || j.fromColumn || j.from_col;
-                const toField = j.to?.field || j.toColumn || j.to_col;
-                // For PostgreSQL UPDATE, use table name for source table (can't alias target table)
-                const fromRef = fromTable === sourceTable ? tableQb.sanitizeIdentifier(sourceTable) : aliasMap[fromTable];
-                const toRef = toTable === sourceTable ? tableQb.sanitizeIdentifier(sourceTable) : aliasMap[toTable];
-                joinConditions.push(`${fromRef}.${tableQb.sanitizeIdentifier(fromField)} = ${toRef}.${tableQb.sanitizeIdentifier(toField)}`);
-              });
-              // Replace source alias with table name in WHERE clauses for PostgreSQL UPDATE
-              let fixedWhereClauses = whereClauses.map(clause =>
-                clause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${tableQb.sanitizeIdentifier(sourceTable)}.`)
-              );
-              fixedWhereClauses = fixedWhereClauses.map(renumberPlaceholders);
-              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')} FROM ${fromClause} WHERE ${joinConditions.join(' AND ')}${fixedWhereClauses.length > 0 ? ' AND ' + fixedWhereClauses.join(' AND ') : ''}`;
-            } else {
-              // No joins - replace source alias with table name in WHERE
-              let fixedWhereClause = whereClause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${tableQb.sanitizeIdentifier(sourceTable)}.`);
-              fixedWhereClause = renumberPlaceholders(fixedWhereClause);
-              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')}${fixedWhereClause}`;
-            }
-          }
-        } else {
-          // Joined table: find the join condition
-          const joinForTable = joins.find(j =>
-            (j.from?.table || j.fromTable || j.from) === table || (j.to?.table || j.toTable || j.to) === table
-          );
-          if (joinForTable) {
-            const fromTable = joinForTable.from?.table || joinForTable.fromTable || joinForTable.from;
-            const toTable = joinForTable.to?.table || joinForTable.toTable || joinForTable.to;
-            const fromField = joinForTable.from?.field || joinForTable.fromColumn || joinForTable.from_col;
-            const toField = joinForTable.to?.field || joinForTable.toColumn || joinForTable.to_col;
-
+          let sql;
+          // Parameter offset for WHERE placeholders (Postgres numbered params)
+          const paramOffset = tableQb.params.length;
+          const renumberPlaceholders = (s) => {
+            if (!s || dialect === 'mysql') return s;
+            return s.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + paramOffset}`);
+          };
+          if (table === sourceTable) {
+            // Source table: use full filter context with joins
             if (dialect === 'mysql') {
-              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} JOIN ${tableQb.sanitizeIdentifier(sourceTable)} ON ${tableQb.sanitizeIdentifier(table)}.${tableQb.sanitizeIdentifier(toField)} = ${tableQb.sanitizeIdentifier(sourceTable)}.${tableQb.sanitizeIdentifier(fromField)} SET ${setClauses.join(', ')}${whereClause}`;
+              if (joinsSql) {
+                sql = `UPDATE ${tableQb.sanitizeIdentifier(sourceTable)} ${sourceAlias}${joinsSql} SET ${setClauses.join(', ')}${whereClause}`;
+              } else {
+                sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')}${whereClause}`;
+              }
             } else {
-              const renumWhereClauses = whereClauses.map(renumberPlaceholders);
-              sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')} FROM ${tableQb.sanitizeIdentifier(sourceTable)} WHERE ${tableQb.sanitizeIdentifier(table)}.${tableQb.sanitizeIdentifier(toField)} = ${tableQb.sanitizeIdentifier(sourceTable)}.${tableQb.sanitizeIdentifier(fromField)}${renumWhereClauses.length > 0 ? ' AND ' + renumWhereClauses.join(' AND ') : ''}`;
+              if (joinsSql) {
+                const fromTables = Array.from(joinedTables).filter(t => t !== sourceTable);
+                const fromClause = fromTables.map(t => `${tableQb.sanitizeIdentifier(t)} ${aliasMap[t]}`).join(', ');
+                const joinConditions = [];
+                joins.forEach(j => {
+                  const fromTable = j.from?.table || j.fromTable || j.from;
+                  const toTable = j.to?.table || j.toTable || j.to;
+                  const fromField = j.from?.field || j.fromColumn || j.from_col;
+                  const toField = j.to?.field || j.toColumn || j.to_col;
+                  // For PostgreSQL UPDATE, use table name for source table (can't alias target table)
+                  const fromRef = fromTable === sourceTable ? tableQb.sanitizeIdentifier(sourceTable) : aliasMap[fromTable];
+                  const toRef = toTable === sourceTable ? tableQb.sanitizeIdentifier(sourceTable) : aliasMap[toTable];
+                  joinConditions.push(`${fromRef}.${tableQb.sanitizeIdentifier(fromField)} = ${toRef}.${tableQb.sanitizeIdentifier(toField)}`);
+                });
+                // Replace source alias with table name in WHERE clauses for PostgreSQL UPDATE
+                let fixedWhereClauses = whereClauses.map(clause =>
+                  clause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${tableQb.sanitizeIdentifier(sourceTable)}.`)
+                );
+                fixedWhereClauses = fixedWhereClauses.map(renumberPlaceholders);
+                sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')} FROM ${fromClause} WHERE ${joinConditions.join(' AND ')}${fixedWhereClauses.length > 0 ? ' AND ' + fixedWhereClauses.join(' AND ') : ''}`;
+              } else {
+                // No joins - replace source alias with table name in WHERE
+                let fixedWhereClause = whereClause.replace(new RegExp(`"${sourceAlias}"\\.`, 'g'), `${tableQb.sanitizeIdentifier(sourceTable)}.`);
+                fixedWhereClause = renumberPlaceholders(fixedWhereClause);
+                sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')}${fixedWhereClause}`;
+              }
+            }
+          } else {
+            // Joined table: find the join condition
+            const joinForTable = joins.find(j =>
+              (j.from?.table || j.fromTable || j.from) === table || (j.to?.table || j.toTable || j.to) === table
+            );
+            if (joinForTable) {
+              const fromTable = joinForTable.from?.table || joinForTable.fromTable || joinForTable.from;
+              const toTable = joinForTable.to?.table || joinForTable.toTable || joinForTable.to;
+              const fromField = joinForTable.from?.field || joinForTable.fromColumn || joinForTable.from_col;
+              const toField = joinForTable.to?.field || joinForTable.toColumn || joinForTable.to_col;
+
+              if (dialect === 'mysql') {
+                sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} JOIN ${tableQb.sanitizeIdentifier(sourceTable)} ON ${tableQb.sanitizeIdentifier(table)}.${tableQb.sanitizeIdentifier(toField)} = ${tableQb.sanitizeIdentifier(sourceTable)}.${tableQb.sanitizeIdentifier(fromField)} SET ${setClauses.join(', ')}${whereClause}`;
+              } else {
+                const renumWhereClauses = whereClauses.map(renumberPlaceholders);
+                sql = `UPDATE ${tableQb.sanitizeIdentifier(table)} SET ${setClauses.join(', ')} FROM ${tableQb.sanitizeIdentifier(sourceTable)} WHERE ${tableQb.sanitizeIdentifier(table)}.${tableQb.sanitizeIdentifier(toField)} = ${tableQb.sanitizeIdentifier(sourceTable)}.${tableQb.sanitizeIdentifier(fromField)}${renumWhereClauses.length > 0 ? ' AND ' + renumWhereClauses.join(' AND ') : ''}`;
+              }
             }
           }
-        }
 
           if (sql) {
             if (dialect === 'mysql') {
-            // MySQL uses '?' so params are simply concatenated
-            const [rows] = await pool.query(sql, [...tableQb.params, ...qb.params]);
+              // MySQL uses '?' so params are simply concatenated
+              const [rows] = await pool.query(sql, [...tableQb.params, ...qb.params]);
               results.push({ table, affectedRows: rows.affectedRows });
             } else {
               try {
@@ -1646,6 +2181,21 @@ router.post('/:id/preview', async (req, res) => {
 
     // Run query
     try {
+      // For local databases, use in-memory graph execution
+      if (connectionId.startsWith('db_')) {
+        const apiGenerator = apiGenerators.get(connectionId);
+        if (!apiGenerator) {
+          return res.status(404).json({ error: 'API Generator not found for local database' });
+        }
+
+        const result = await apiGenerator.executeGraph(graph, { limit, offset: 0 });
+        const columns = result.columns;
+        const rows = result.rows;
+        const friendlySummary = summaryParts.join(' ; ');
+        return res.json({ columns, rows, sql: '(in-memory execution)', params: [], summary: friendlySummary });
+      }
+
+      // For SQL databases, execute the built SQL query
       const pool = await connectionManager.getConnection(connectionId);
       let rows;
       if (dialect === 'mysql') {
@@ -1702,4 +2252,4 @@ router.get('/:id/endpoints', (req, res) => {
   res.json({ connectionId, tables: Object.keys(schema || {}), endpoints: unique });
 });
 
-module.exports = { router, apiRouters, schemaCache, apiGenerators };
+module.exports = { router, apiRouters, schemaCache, apiGenerators, dataStore };

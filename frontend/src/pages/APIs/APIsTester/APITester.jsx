@@ -140,7 +140,9 @@ const APITester = ({
     setPageNumber("1");
   }, [schema, selectedTable]);
 
-  // Initialize bodyFields for POST/PUT based on column types (exclude PK and sensitive fields)
+  // Initialize bodyFields for POST/PUT based on column types
+  // - POST: exclude only auto-increment PKs (non-auto PKs should be provided)
+  // - PUT: exclude all PKs (PKs are used in filters, not updated)
   useEffect(() => {
     if (!schema) return;
     const endpointMethod = endpoint?.method || operation;
@@ -148,19 +150,20 @@ const APITester = ({
     
     const sourceTable = endpoint?.graph?.source?.table || selectedTable;
     
-    // Collect tables to include: for POST include all (source + joined), for PUT only source
-    const tablesToInclude = [];
-    if (endpoint?.graph?.source?.table) {
+    // Collect tables to include: prefer explicit tables array, otherwise extract from source + joins
+    let tablesToInclude = [];
+    if (endpoint?.graph?.tables && endpoint.graph.tables.length > 0) {
+      // Use explicit tables array if available
+      tablesToInclude = [...endpoint.graph.tables];
+    } else if (endpoint?.graph?.source?.table) {
       tablesToInclude.push(endpoint.graph.source.table);
-      // For POST: include joined tables. For PUT: only source table (can't update joined tables)
-      if (endpointMethod === "POST") {
-        (endpoint.graph.joins || []).forEach(j => {
-          const toTable = j.to?.table || j.toTable || j.to;
-          const fromTable = j.from?.table || j.fromTable || j.from;
-          if (toTable && !tablesToInclude.includes(toTable)) tablesToInclude.push(toTable);
-          if (fromTable && !tablesToInclude.includes(fromTable)) tablesToInclude.push(fromTable);
-        });
-      }
+      // Include joined tables for both POST and PUT
+      (endpoint.graph.joins || []).forEach(j => {
+        const toTable = j.to?.table || j.toTable || j.to;
+        const fromTable = j.from?.table || j.fromTable || j.from;
+        if (toTable && !tablesToInclude.includes(toTable)) tablesToInclude.push(toTable);
+        if (fromTable && !tablesToInclude.includes(fromTable)) tablesToInclude.push(fromTable);
+      });
     } else if (selectedTable) {
       tablesToInclude.push(selectedTable);
     }
@@ -180,8 +183,13 @@ const APITester = ({
       cols.forEach((c) => {
         // If outputFields exist for this table, only include selected fields
         if (selectedFieldsForTable && !selectedFieldsForTable.includes(c.name)) return;
-        
-        if (pks.includes(c.name)) return; // Skip PK
+
+        const isPk = pks.includes(c.name);
+        const isAutoInc = c.isAutoIncrement === true;
+        // On PUT, exclude all PKs from body fields
+        if (endpointMethod === "PUT" && isPk) return;
+        // On POST, exclude only auto-increment PKs
+        if (endpointMethod === "POST" && isPk && isAutoInc) return;
         const name = (c.name || "").toLowerCase();
         // Skip password fields only for PUT (updates), not for POST (new records)
         if (name.includes("password") && endpointMethod === "PUT") return;
@@ -270,6 +278,60 @@ const APITester = ({
       payload[k] = v;
     });
     return payload;
+  };
+
+  // Validate required fields for POST - returns array of missing field names or empty if valid
+  const validateRequiredFields = () => {
+    if (!schema) return [];
+    
+    const tablesToInclude = [];
+    if (endpoint?.graph?.tables && endpoint.graph.tables.length > 0) {
+      tablesToInclude.push(...endpoint.graph.tables);
+    } else if (endpoint?.graph?.source?.table) {
+      tablesToInclude.push(endpoint.graph.source.table);
+      (endpoint.graph.joins || []).forEach(j => {
+        const toTable = j.to?.table || j.toTable || j.to;
+        if (toTable && !tablesToInclude.includes(toTable)) tablesToInclude.push(toTable);
+      });
+    } else if (selectedTable) {
+      tablesToInclude.push(selectedTable);
+    }
+    
+    const missingFields = [];
+    const endpointOutputFields = endpoint?.graph?.outputFields || endpoint?.outputFields;
+    
+    tablesToInclude.forEach(table => {
+      const cols = schema[table]?.columns || [];
+      const pks = schema[table]?.primaryKeys || [];
+      const fks = schema[table]?.foreignKeys || [];
+      const prefix = tablesToInclude.length > 1 ? `${table}.` : '';
+      const selectedFieldsForTable = endpointOutputFields?.[table];
+      
+      cols.forEach(col => {
+        const isPk = pks.includes(col.name);
+        // Skip only auto-increment PKs; non-auto PKs should be provided
+        if (isPk && col.isAutoIncrement === true) return;
+        
+        // Only check fields that are in outputFields (if defined)
+        if (selectedFieldsForTable && !selectedFieldsForTable.includes(col.name)) return;
+        
+        // Check if field is required (not nullable and no default)
+        // FK columns are only required if they are non-nullable without default
+        const isNullable = col.nullable === true || col.nullable === 'YES';
+        const hasDefault = col.default !== null && col.default !== undefined && col.default !== '';
+        const isRequired = !isNullable && !hasDefault;
+        
+        if (isRequired) {
+          const key = prefix + col.name;
+          const value = bodyFields[key];
+          if (value === undefined || value === '' || value === null) {
+            missingFields.push(key);
+          }
+        }
+      });
+    });
+    
+    return missingFields;
   };
 
   const buildPostPayload = () => {
@@ -368,6 +430,7 @@ const APITester = ({
     const allFks = [];
     tablesToLoad.forEach(table => {
       const fks = schema[table]?.foreignKeys || [];
+      console.log(`[FK DEBUG APITester] Table ${table} has ${fks.length} FKs:`, fks);
       const prefix = tablesToLoad.length > 1 ? `${table}.` : '';
       fks.forEach(fk => {
         allFks.push({ ...fk, prefixedColumn: prefix + fk.columnName });
@@ -377,13 +440,16 @@ const APITester = ({
     const options = {};
     const fetches = allFks.map(async (fk) => {
       try {
+        console.log(`[FK DEBUG APITester] Fetching data from ${fk.foreignTable} for ${fk.prefixedColumn}`);
         const rows = await listRecords(connectionId, fk.foreignTable, {
           limit: 1000,
         });
+        console.log(`[FK DEBUG APITester] Got ${rows?.length || 0} rows from ${fk.foreignTable}`);
         options[fk.prefixedColumn] = rows;
         // Also store without prefix for backward compatibility
         if (!options[fk.columnName]) options[fk.columnName] = rows;
       } catch (e) {
+        console.error(`[FK DEBUG APITester] Error fetching FK data from ${fk.foreignTable}:`, e);
         options[fk.prefixedColumn] = [];
         if (!options[fk.columnName]) options[fk.columnName] = [];
       }
@@ -450,6 +516,13 @@ const APITester = ({
             additionalFilters: additionalFilters.length > 0 ? additionalFilters : undefined,
           });
         } else if (endpointMethod === 'POST') {
+          // Validate required fields before POST
+          const missingFields = validateRequiredFields();
+          if (missingFields.length > 0) {
+            setError(`Missing required fields: ${missingFields.join(', ')}`);
+            setLoading(false);
+            return;
+          }
           // POST: Create new record using full graph context
           const parsedBody = buildPostPayload();
           result = await api.post(`/connections/${connectionId}/execute`, {
@@ -494,6 +567,13 @@ const APITester = ({
         // Build body from bodyFields for POST/PUT
         let parsedBody = null;
         if (operation === "POST") {
+          // Validate required fields before POST
+          const missingFields = validateRequiredFields();
+          if (missingFields.length > 0) {
+            setError(`Missing required fields: ${missingFields.join(', ')}`);
+            setLoading(false);
+            return;
+          }
           parsedBody = buildPostPayload();
         } else if (operation === "PUT") {
           // For PUT, build payload with update fields and where conditions
@@ -791,9 +871,16 @@ const APITester = ({
                       const isFk = fks.includes(col.name);
                       const name = (col.name || "").toLowerCase();
                       const isPost = operation === "POST" || endpoint?.method === "POST";
+                      const isAutoInc = col.isAutoIncrement === true;
                       // Skip password fields only for PUT (updates), show them for POST (new records)
                       if (name.includes("password") && !isPost) return null;
-                      if (isPk && !isFk) return null;
+                      if (isPost) {
+                        // For POST, hide only auto-increment PKs (non-auto PKs should be provided by user)
+                        if (isPk && !isFk && isAutoInc) return null;
+                      } else {
+                        // For PUT, hide all PKs (PKs are used in filters, not updated)
+                        if (isPk && !isFk) return null;
+                      }
                       
                       // Create a modified col object with prefixed name for multi-table
                       const colWithPrefix = tablesToRender.length > 1 

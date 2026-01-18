@@ -450,15 +450,16 @@ const Canvas = ({
               {((schema[t]?.columns) || []).slice(0, 50).map((c) => {
                 const selected = (outputFields[t] || []).includes(c.name);
                 const isRequired = (requiredFields[t] || []).includes(c.name);
-                const tooltipText = isRequired && endpointMethod === 'POST'
-                  ? `Required field for POST - cannot be deselected`
+                const isLockedMethod = endpointMethod === 'POST';
+                const tooltipText = isRequired && isLockedMethod
+                  ? `Required field for ${endpointMethod} - cannot be deselected`
                   : 'Click to select/deselect this column.';
                 return (
                   <Tooltip key={c.name} title={tooltipText}>
                     <Chip
                       label={
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          {isRequired && endpointMethod === 'POST' && <LockIcon sx={{ fontSize: 12 }} />}
+                          {isRequired && isLockedMethod && <LockIcon sx={{ fontSize: 12 }} />}
                           {c.name}
                         </Box>
                       }
@@ -468,7 +469,7 @@ const Canvas = ({
                         borderRadius: 2, 
                         height: 28, 
                         fontSize: '0.8rem',
-                        ...(isRequired && endpointMethod === 'POST' && {
+                        ...(isRequired && isLockedMethod && {
                           borderColor: 'warning.main',
                           borderWidth: 2,
                           borderStyle: 'solid',

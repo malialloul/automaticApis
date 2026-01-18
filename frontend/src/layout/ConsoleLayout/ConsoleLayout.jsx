@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   Box,
   Snackbar,
@@ -11,11 +12,18 @@ import { AppContext } from "../../App";
 import { useConnection } from "../../_shared/database/useConnection";
 import { NoConnections } from "./NoConnections";
 
+// Pages that can be accessed without a database connection
+const NO_CONNECTION_PAGES = ['/schema-builder', '/dashboard'];
+
 export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
   const {
     currentConnection,
   } = useConnection();
   const { schema, isLoadingSchema, schemaError } = useContext(AppContext);
+  const location = useLocation();
+
+  // Check if current page can be accessed without a connection
+  const allowWithoutConnection = NO_CONNECTION_PAGES.some(page => location.pathname.startsWith(page));
 
   const [toast, setToast] = useState({
     open: false,
@@ -51,7 +59,7 @@ export default function ConsoleLayout({ children, darkMode, setDarkMode }) {
           {
             isLoadingSchema ? <Box sx={{ display: "flex", justifyContent: "center", p: 3 }}>
               <CircularProgress />
-            </Box> : schemaError ? <Alert severity="error">{schemaError}</Alert> : !currentConnection ? <NoConnections /> : children
+            </Box> : schemaError && !allowWithoutConnection ? <Alert severity="error">{schemaError}</Alert> : !currentConnection && !allowWithoutConnection ? <NoConnections /> : children
           }
 
         </Box>
