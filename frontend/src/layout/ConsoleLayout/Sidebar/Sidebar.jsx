@@ -22,11 +22,12 @@ import {
 } from "@mui/material";
 import { loadConnections } from "../../../utils/storage";
 import StorageIcon from "@mui/icons-material/Storage";
-import ConnectionForm from "./ConnectionForm";
+import ConnectionForm from "../../../entities/connections/AddConnectionModal/ConnectionForm";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import PowerOffIcon from "@mui/icons-material/PowerOff";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import { AddConnectionModal } from "../../../entities/connections/AddConnectionModal/AddConnectionModal";
 
 export const Sidebar = () => {
     const theme = useTheme();
@@ -372,38 +373,7 @@ export const Sidebar = () => {
                 </List>
             )}
         </Box>
-        <Dialog
-            open={openDialog}
-            onClose={() => setOpenDialog(false)}
-            maxWidth="md"
-            fullWidth
-        >
-            <DialogTitle>Add Connection</DialogTitle>
-            <DialogContent dividers>
-                <ConnectionForm
-                    onConnectionSaved={(conn) => {
-                        saveCurrentConnection(conn);
-                        window.dispatchEvent(new CustomEvent("connections-changed"));
-                        selectConnection(conn);
-                        setOpenDialog(false);
-                        window.dispatchEvent(
-                            new CustomEvent("toast", {
-                                detail: {
-                                    message: "Database connected successfully",
-                                    severity: "success",
-                                },
-                            })
-                        );
-                    }}
-                    onSchemaLoaded={() => {
-                        // backend introspection done; nothing else required
-                    }}
-                />
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={() => setOpenDialog(false)}>Close</Button>
-            </DialogActions>
-        </Dialog>
+       <AddConnectionModal openDialog={openDialog} setOpenDialog={setOpenDialog} />
         <Dialog
             open={confirm.open}
             onClose={() =>

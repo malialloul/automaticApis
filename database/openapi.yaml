@@ -1,0 +1,1411 @@
+openapi: 3.0.3
+info:
+  title: Automatic APIs - Application Models
+  description: |
+    OpenAPI specification for the Automatic APIs application.
+    This document defines all data models used throughout the application
+    for database connections, schema introspection, endpoint building, and API management.
+  version: 1.0.0
+  contact:
+    name: Automatic APIs Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3001/api
+    description: Development server
+  - url: https://api.automaticapis.com/api
+    description: Production server
+
+tags:
+  - name: Connections
+    description: Database connection management
+  - name: Schema
+    description: Schema introspection and caching
+  - name: Endpoints
+    description: Custom endpoint builder
+  - name: Data
+    description: CRUD operations on connected databases
+  - name: Logs
+    description: API usage logs and analytics
+
+paths:
+  /connections/test:
+    post:
+      tags: [Connections]
+      summary: Test database connection
+      operationId: testConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionConfig'
+      responses:
+        '200':
+          description: Connection test successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionTestResult'
+        '400':
+          description: Connection test failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /connections/{connectionId}/introspect:
+    post:
+      tags: [Connections, Schema]
+      summary: Introspect database schema
+      operationId: introspectConnection
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionConfig'
+      responses:
+        '200':
+          description: Schema introspection successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntrospectionResult'
+        '400':
+          description: Introspection failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /connections/{connectionId}/schema:
+    get:
+      tags: [Schema]
+      summary: Get cached schema
+      operationId: getSchema
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '200':
+          description: Schema retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseSchema'
+        '404':
+          description: Schema not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags: [Schema]
+      summary: Save schema (for local databases)
+      operationId: saveSchema
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                schema:
+                  $ref: '#/components/schemas/DatabaseSchema'
+              required:
+                - schema
+      responses:
+        '200':
+          description: Schema saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /connections/{connectionId}/swagger:
+    get:
+      tags: [Connections]
+      summary: Get OpenAPI specification for connection
+      operationId: getSwagger
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '200':
+          description: OpenAPI spec retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                description: OpenAPI 3.0 specification
+
+  /endpoints:
+    get:
+      tags: [Endpoints]
+      summary: List all custom endpoints
+      operationId: listEndpoints
+      responses:
+        '200':
+          description: Endpoints retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Endpoint'
+    post:
+      tags: [Endpoints]
+      summary: Create a new custom endpoint
+      operationId: createEndpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EndpointInput'
+      responses:
+        '201':
+          description: Endpoint created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Endpoint'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Slug already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /endpoints/{slug}:
+    get:
+      tags: [Endpoints]
+      summary: Get endpoint by slug
+      operationId: getEndpoint
+      parameters:
+        - $ref: '#/components/parameters/EndpointSlug'
+      responses:
+        '200':
+          description: Endpoint retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Endpoint'
+        '404':
+          description: Endpoint not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      tags: [Endpoints]
+      summary: Update endpoint
+      operationId: updateEndpoint
+      parameters:
+        - $ref: '#/components/parameters/EndpointSlug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EndpointInput'
+      responses:
+        '200':
+          description: Endpoint updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Endpoint'
+        '404':
+          description: Endpoint not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Endpoints]
+      summary: Delete endpoint
+      operationId: deleteEndpoint
+      parameters:
+        - $ref: '#/components/parameters/EndpointSlug'
+      responses:
+        '200':
+          description: Endpoint deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '404':
+          description: Endpoint not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /{connectionId}/{tableName}:
+    get:
+      tags: [Data]
+      summary: List records from table
+      operationId: listRecords
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/OrderBy'
+        - $ref: '#/components/parameters/OrderDir'
+      responses:
+        '200':
+          description: Records retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags: [Data]
+      summary: Create a new record
+      operationId: createRecord
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+        - $ref: '#/components/parameters/TableName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Record created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /{connectionId}/{tableName}/{id}:
+    get:
+      tags: [Data]
+      summary: Get record by ID
+      operationId: getRecord
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/RecordId'
+      responses:
+        '200':
+          description: Record retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      tags: [Data]
+      summary: Update record by ID
+      operationId: updateRecord
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/RecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Record updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Data]
+      summary: Delete record by ID
+      operationId: deleteRecord
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+        - $ref: '#/components/parameters/TableName'
+        - $ref: '#/components/parameters/RecordId'
+      responses:
+        '200':
+          description: Record deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  deleted:
+                    type: integer
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  parameters:
+    ConnectionId:
+      name: connectionId
+      in: path
+      required: true
+      description: Unique connection identifier
+      schema:
+        type: string
+        example: conn_1234567890
+
+    TableName:
+      name: tableName
+      in: path
+      required: true
+      description: Database table name
+      schema:
+        type: string
+        example: users
+
+    RecordId:
+      name: id
+      in: path
+      required: true
+      description: Record primary key value
+      schema:
+        oneOf:
+          - type: string
+          - type: integer
+        example: 1
+
+    EndpointSlug:
+      name: slug
+      in: path
+      required: true
+      description: Unique endpoint slug
+      schema:
+        type: string
+        pattern: '^[a-z0-9-]{1,80}$'
+        example: get-active-users
+
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of records to return
+      schema:
+        type: integer
+        default: 100
+        minimum: 1
+        maximum: 1000
+
+    Offset:
+      name: offset
+      in: query
+      description: Number of records to skip
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+
+    OrderBy:
+      name: orderBy
+      in: query
+      description: Column name to sort by
+      schema:
+        type: string
+
+    OrderDir:
+      name: orderDir
+      in: query
+      description: Sort direction
+      schema:
+        type: string
+        enum: [ASC, DESC]
+        default: ASC
+
+  schemas:
+    # ========================================
+    # User Models
+    # ========================================
+    User:
+      type: object
+      description: Application user
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        name:
+          type: string
+          maxLength: 255
+        avatar_url:
+          type: string
+          format: uri
+        is_active:
+          type: boolean
+          default: true
+        is_admin:
+          type: boolean
+          default: false
+        last_login_at:
+          type: string
+          format: date-time
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - email
+
+    UserInput:
+      type: object
+      description: User creation/update input
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          minLength: 8
+        name:
+          type: string
+          maxLength: 255
+        avatar_url:
+          type: string
+          format: uri
+      required:
+        - email
+        - password
+
+    # ========================================
+    # Connection Models
+    # ========================================
+    DbConnectionType:
+      type: string
+      enum:
+        - postgres
+        - mysql
+        - mongodb
+        - mssql
+        - oracle
+        - local
+      description: Supported database types
+
+    ConnectionStatus:
+      type: string
+      enum:
+        - active
+        - inactive
+        - error
+        - testing
+      description: Connection status
+
+    Connection:
+      type: object
+      description: Database connection configuration
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        type:
+          $ref: '#/components/schemas/DbConnectionType'
+        host:
+          type: string
+          maxLength: 255
+          example: localhost
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          example: 5432
+        database_name:
+          type: string
+          maxLength: 255
+          example: mydb
+        username:
+          type: string
+          maxLength: 255
+        uri:
+          type: string
+          description: MongoDB connection URI
+        use_ssl:
+          type: boolean
+          default: false
+        connection_options:
+          type: object
+          additionalProperties: true
+        status:
+          $ref: '#/components/schemas/ConnectionStatus'
+        last_tested_at:
+          type: string
+          format: date-time
+          readOnly: true
+        last_introspected_at:
+          type: string
+          format: date-time
+          readOnly: true
+        is_local:
+          type: boolean
+          default: false
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - name
+        - type
+
+    ConnectionConfig:
+      type: object
+      description: Connection configuration for testing/introspection
+      properties:
+        host:
+          type: string
+          example: localhost
+        port:
+          type: integer
+          example: 5432
+        database:
+          type: string
+          example: mydb
+        user:
+          type: string
+          example: postgres
+        password:
+          type: string
+          format: password
+        type:
+          $ref: '#/components/schemas/DbConnectionType'
+        uri:
+          type: string
+          description: Full connection URI (for MongoDB)
+        encrypt:
+          type: boolean
+          default: false
+          description: Use SSL encryption (for MSSQL)
+
+    ConnectionTestResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        info:
+          type: object
+          additionalProperties: true
+
+    IntrospectionResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        connectionId:
+          type: string
+        stats:
+          type: object
+          properties:
+            tables:
+              type: integer
+            relationships:
+              type: integer
+            endpoints:
+              type: integer
+
+    # ========================================
+    # Schema Models
+    # ========================================
+    DatabaseSchema:
+      type: object
+      description: Complete database schema
+      additionalProperties:
+        $ref: '#/components/schemas/TableSchema'
+      example:
+        users:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              nullable: false
+          primaryKeys:
+            - id
+          foreignKeys: []
+
+    TableSchema:
+      type: object
+      description: Single table schema definition
+      properties:
+        name:
+          type: string
+          description: Table name
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/ColumnSchema'
+        primaryKeys:
+          type: array
+          items:
+            type: string
+        foreignKeys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForeignKeySchema'
+        reverseForeignKeys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForeignKeySchema'
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/IndexSchema'
+      required:
+        - name
+        - columns
+
+    ColumnSchema:
+      type: object
+      description: Table column definition
+      properties:
+        name:
+          type: string
+          description: Column name
+        type:
+          type: string
+          description: Data type (e.g., integer, varchar, text)
+        nullable:
+          type: boolean
+          default: true
+        default:
+          type: string
+          description: Default value expression
+        maxLength:
+          type: integer
+          description: Maximum length for string types
+        precision:
+          type: integer
+          description: Numeric precision
+        scale:
+          type: integer
+          description: Numeric scale
+        udtName:
+          type: string
+          description: User-defined type name (for enums)
+        enumOptions:
+          type: array
+          items:
+            type: string
+          description: Enum values if applicable
+        isAutoIncrement:
+          type: boolean
+          default: false
+      required:
+        - name
+        - type
+
+    ForeignKeySchema:
+      type: object
+      description: Foreign key relationship
+      properties:
+        columnName:
+          type: string
+          description: Local column name
+        foreignTable:
+          type: string
+          description: Referenced table name
+        foreignColumn:
+          type: string
+          description: Referenced column name
+        onDelete:
+          $ref: '#/components/schemas/ForeignKeyAction'
+        onUpdate:
+          $ref: '#/components/schemas/ForeignKeyAction'
+      required:
+        - columnName
+        - foreignTable
+        - foreignColumn
+
+    ForeignKeyAction:
+      type: string
+      enum:
+        - NO ACTION
+        - RESTRICT
+        - CASCADE
+        - SET NULL
+        - SET DEFAULT
+      default: NO ACTION
+
+    IndexSchema:
+      type: object
+      description: Table index definition
+      properties:
+        name:
+          type: string
+        columns:
+          type: array
+          items:
+            type: string
+        isUnique:
+          type: boolean
+          default: false
+        type:
+          type: string
+          default: btree
+
+    # ========================================
+    # Endpoint Builder Models
+    # ========================================
+    HttpMethod:
+      type: string
+      enum:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+
+    JoinType:
+      type: string
+      enum:
+        - INNER
+        - LEFT
+        - RIGHT
+        - FULL
+        - CROSS
+
+    ComparisonOperator:
+      type: string
+      enum:
+        - eq
+        - neq
+        - gt
+        - gte
+        - lt
+        - lte
+        - like
+        - ilike
+        - in
+        - not_in
+        - is_null
+        - is_not_null
+        - between
+
+    AggregationFunction:
+      type: string
+      enum:
+        - COUNT
+        - SUM
+        - AVG
+        - MIN
+        - MAX
+        - ARRAY_AGG
+        - STRING_AGG
+
+    Endpoint:
+      type: object
+      description: Custom API endpoint
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        connection_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          pattern: '^[a-z0-9-]{1,80}$'
+          maxLength: 80
+        description:
+          type: string
+        method:
+          $ref: '#/components/schemas/HttpMethod'
+        path:
+          type: string
+          maxLength: 500
+        graph:
+          $ref: '#/components/schemas/EndpointGraph'
+        is_active:
+          type: boolean
+          default: true
+        is_public:
+          type: boolean
+          default: false
+        version:
+          type: string
+          default: v1
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - name
+        - method
+        - path
+
+    EndpointInput:
+      type: object
+      description: Endpoint creation/update input
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          pattern: '^[a-z0-9-]{1,80}$'
+        description:
+          type: string
+        method:
+          $ref: '#/components/schemas/HttpMethod'
+        path:
+          type: string
+        graph:
+          $ref: '#/components/schemas/EndpointGraph'
+        is_active:
+          type: boolean
+        is_public:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - name
+
+    EndpointGraph:
+      type: object
+      description: Visual query builder graph structure
+      properties:
+        source:
+          type: object
+          properties:
+            table:
+              type: string
+              description: Source table name
+        joins:
+          type: array
+          items:
+            $ref: '#/components/schemas/JoinDefinition'
+        outputFields:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: Fields to output per table
+          example:
+            users:
+              - id
+              - name
+              - email
+            posts:
+              - '*'
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterCondition'
+        groupBy:
+          type: array
+          items:
+            type: string
+        aggregations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Aggregation'
+        having:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterCondition'
+        orderBy:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              direction:
+                type: string
+                enum: [ASC, DESC]
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    JoinDefinition:
+      type: object
+      description: Table join definition
+      properties:
+        type:
+          $ref: '#/components/schemas/JoinType'
+        from:
+          type: object
+          properties:
+            table:
+              type: string
+            field:
+              type: string
+          required:
+            - table
+            - field
+        to:
+          type: object
+          properties:
+            table:
+              type: string
+            field:
+              type: string
+          required:
+            - table
+            - field
+        alias:
+          type: string
+      required:
+        - type
+        - from
+        - to
+
+    FilterCondition:
+      type: object
+      description: Query filter condition
+      properties:
+        table:
+          type: string
+        column:
+          type: string
+        operator:
+          $ref: '#/components/schemas/ComparisonOperator'
+        value:
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+            - type: array
+              items:
+                oneOf:
+                  - type: string
+                  - type: number
+        valueType:
+          type: string
+          enum:
+            - static
+            - parameter
+            - variable
+          default: static
+        parameterName:
+          type: string
+          description: Parameter name for dynamic values
+        isOr:
+          type: boolean
+          default: false
+          description: Use OR instead of AND
+      required:
+        - table
+        - column
+        - operator
+
+    Aggregation:
+      type: object
+      description: Aggregation function definition
+      properties:
+        function:
+          $ref: '#/components/schemas/AggregationFunction'
+        table:
+          type: string
+        column:
+          type: string
+        alias:
+          type: string
+        distinct:
+          type: boolean
+          default: false
+      required:
+        - function
+        - table
+        - column
+
+    EndpointParameter:
+      type: object
+      description: Endpoint input parameter
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        location:
+          type: string
+          enum:
+            - query
+            - path
+            - header
+            - body
+          default: query
+        dataType:
+          type: string
+          default: string
+        required:
+          type: boolean
+          default: false
+        defaultValue:
+          type: string
+        description:
+          type: string
+        validationPattern:
+          type: string
+          description: Regex pattern for validation
+        enumValues:
+          type: array
+          items:
+            type: string
+        minValue:
+          type: number
+        maxValue:
+          type: number
+        minLength:
+          type: integer
+        maxLength:
+          type: integer
+
+    # ========================================
+    # Local Database Data Model
+    # ========================================
+    LocalDatabaseRecord:
+      type: object
+      description: Record in a local (Schema Builder) database
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        connection_id:
+          type: string
+          format: uuid
+        table_name:
+          type: string
+        row_data:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # ========================================
+    # API Logging Models
+    # ========================================
+    ApiRequestLog:
+      type: object
+      description: API request log entry
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        connection_id:
+          type: string
+          format: uuid
+        endpoint_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        method:
+          $ref: '#/components/schemas/HttpMethod'
+        path:
+          type: string
+        query_params:
+          type: object
+          additionalProperties: true
+        request_body:
+          type: object
+          additionalProperties: true
+        response_status:
+          type: integer
+        response_body_preview:
+          type: string
+          maxLength: 1000
+        response_time_ms:
+          type: integer
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    QueryHistory:
+      type: object
+      description: SQL query execution history
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        connection_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        query_text:
+          type: string
+        query_params:
+          type: object
+          additionalProperties: true
+        execution_time_ms:
+          type: integer
+        rows_affected:
+          type: integer
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # ========================================
+    # Settings Models
+    # ========================================
+    AppSetting:
+      type: object
+      description: Application setting
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        user_id:
+          type: string
+          format: uuid
+        setting_key:
+          type: string
+          maxLength: 100
+        setting_value:
+          type: object
+          additionalProperties: true
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    ConnectionSetting:
+      type: object
+      description: Connection-specific setting
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        connection_id:
+          type: string
+          format: uuid
+        setting_key:
+          type: string
+          maxLength: 100
+        setting_value:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # ========================================
+    # Statistics Models
+    # ========================================
+    ConnectionStats:
+      type: object
+      description: Connection statistics
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        connection_name:
+          type: string
+        connection_type:
+          $ref: '#/components/schemas/DbConnectionType'
+        status:
+          $ref: '#/components/schemas/ConnectionStatus'
+        table_count:
+          type: integer
+        column_count:
+          type: integer
+        relationship_count:
+          type: integer
+        endpoint_count:
+          type: integer
+        last_introspected_at:
+          type: string
+          format: date-time
+
+    ApiUsageStats:
+      type: object
+      description: API usage statistics
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        endpoint_id:
+          type: string
+          format: uuid
+        method:
+          $ref: '#/components/schemas/HttpMethod'
+        hour:
+          type: string
+          format: date-time
+        request_count:
+          type: integer
+        avg_response_time_ms:
+          type: number
+        error_count:
+          type: integer
+
+    # ========================================
+    # Common Response Models
+    # ========================================
+    Error:
+      type: object
+      description: Error response
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+      required:
+        - error
+
+    SuccessResponse:
+      type: object
+      description: Generic success response
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+
+    PaginatedResponse:
+      type: object
+      description: Paginated response wrapper
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+        pagination:
+          type: object
+          properties:
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+            hasMore:
+              type: boolean
