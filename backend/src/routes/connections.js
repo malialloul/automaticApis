@@ -247,36 +247,149 @@ router.post('/:id/schema', (req, res) => {
       tablesType: typeof tables,
       tablesLength: Array.isArray(tables) ? tables.length : 'not an array'
     });
+    
+    // DEBUG: Log the actual schema object structure
+    console.log('[DEBUG POST /schema RAW REQUEST] req.body:', {
+      hasSchema: !!schema,
+      schemaPropNames: schema ? Object.keys(schema).slice(0, 3) : null,
+    });
+    
+    if (schema && typeof schema === 'object') {
+      const firstTableName = Object.keys(schema)[0];
+      if (firstTableName) {
+        console.log(`[DEBUG POST /schema RAW] First table "${firstTableName}":`, schema[firstTableName]);
+      }
+    }
+    
+    // DEBUG: Log first table's primaryKeys from incoming schema
+    if (schema && typeof schema === 'object') {
+      const firstTable = Object.entries(schema)[0];
+      if (firstTable) {
+        console.log(`[DEBUG POST /schema] First table: ${firstTable[0]}`, {
+          hasPrimaryKeys: 'primaryKeys' in firstTable[1],
+          primaryKeysValue: firstTable[1].primaryKeys,
+          hasPrimaryKey: 'primaryKey' in firstTable[1],
+          primaryKeyValue: firstTable[1].primaryKey,
+        });
+      }
+    }
 
     // Accept either 'schema' object or 'tables' array
-    const dataToStore = schema || { tables };
+    // If 'tables' is provided (SchemaBuilder format), convert to keyed object
+    let dataToStore = schema;
+    if (!dataToStore && Array.isArray(tables)) {
+      dataToStore = {};
+      for (const t of tables) {
+        if (!t || !t.name) continue;
+        const primaryKeys = (t.primaryKeys || t.primaryKey || []).map(pk => 
+          typeof pk === 'string' ? pk.trim() : pk
+        ).filter(Boolean);
+        dataToStore[t.name] = {
+          name: t.name,
+          columns: t.columns || [],
+          primaryKeys: primaryKeys,
+          foreignKeys: (t.foreignKeys || []).map((fk) => ({
+            columnName: fk.columnName || fk.column,
+            foreignTable: fk.foreignTable || fk.refTable,
+            foreignColumn: fk.foreignColumn || fk.refColumn,
+            onDelete: fk.onDelete,
+            onUpdate: fk.onUpdate,
+          })),
+          indexes: t.indexes || [],
+        };
+      }
+    }
 
     if (!dataToStore) {
       return res.status(400).json({ error: 'Missing schema or tables in request body' });
     }
 
     // Normalize schema: ensure each table has foreignKeys and reverseForeignKeys arrays
+    const sanitizeName = (n) => {
+      if (!n || typeof n !== 'string') return n;
+      // Trim whitespace and strip surrounding quotes/backticks/brackets
+      let s = n.trim();
+      s = s.replace(/^"(.+)"$/,'$1');
+      s = s.replace(/^'(.*)'$/,'$1');
+      s = s.replace(/^`(.*)`$/,'$1');
+      s = s.replace(/^\[(.*)\]$/,'$1');
+      return s;
+    };
+
     const normalizedSchema = {};
-    for (const [tableName, tableData] of Object.entries(dataToStore)) {
-      // Normalize foreign keys: convert { column, refTable, refColumn } to { columnName, foreignTable, foreignColumn }
-      const normalizedFks = (tableData.foreignKeys || []).map(fk => ({
-        columnName: fk.columnName || fk.column,
-        foreignTable: fk.foreignTable || fk.refTable,
-        foreignColumn: fk.foreignColumn || fk.refColumn,
+    for (const [rawTableName, rawTableData] of Object.entries(dataToStore)) {
+      const tableName = sanitizeName(rawTableName);
+      const tableData = rawTableData || {};
+
+      // Normalize foreign keys: convert variants and sanitize referenced names
+      const normalizedFks = (tableData.foreignKeys || []).map((fk) => ({
+        columnName: sanitizeName(fk.columnName || fk.column || fk.column_name),
+        foreignTable: sanitizeName(fk.foreignTable || fk.refTable || fk.foreign_table),
+        foreignColumn: sanitizeName(fk.foreignColumn || fk.refColumn || fk.foreign_column),
+        onDelete: fk.onDelete || undefined,
+        onUpdate: fk.onUpdate || undefined,
+      })).filter((fk) => fk.columnName && fk.foreignTable && fk.foreignColumn);
+
+      // Normalize primary keys: handle multiple field name variants and sanitize
+      let primaryKeys = tableData.primaryKeys || tableData.primaryKey || [];
+      if (Array.isArray(primaryKeys)) {
+        primaryKeys = primaryKeys.map(pk => sanitizeName(pk)).filter(Boolean);
+      } else {
+        primaryKeys = [];
+      }
+      
+      // FALLBACK: If primaryKeys array is empty but columns have isPrimaryKey flag, extract from there
+      if (primaryKeys.length === 0 && Array.isArray(tableData.columns)) {
+        const colsWithPK = tableData.columns.filter(col => col.isPrimaryKey);
+        if (colsWithPK.length > 0) {
+          console.log(`[DEBUG POST /schema] Extracting primaryKeys from column.isPrimaryKey for table ${tableName}:`, colsWithPK.map(c => c.name));
+          primaryKeys = colsWithPK.map(col => sanitizeName(col.name)).filter(Boolean);
+        }
+      }
+
+      // Normalize columns and sanitize names
+      const normalizedColumns = (tableData.columns || []).map(col => ({
+        ...col,
+        name: sanitizeName(col.name),
       }));
 
       normalizedSchema[tableName] = {
-        ...tableData,
+        name: tableData.name || tableName,
+        columns: normalizedColumns,
+        primaryKeys: primaryKeys,
         foreignKeys: normalizedFks,
-        reverseForeignKeys: tableData.reverseForeignKeys || [],
-        columns: tableData.columns || [],
-        primaryKeys: tableData.primaryKeys || [],
+        reverseForeignKeys: [],
         indexes: tableData.indexes || [],
       };
     }
 
+    // Compute reverse foreign keys from normalized FKs
+    for (const [tableName, tableInfo] of Object.entries(normalizedSchema)) {
+      const fks = tableInfo.foreignKeys || [];
+      for (const fk of fks) {
+        const targetTable = normalizedSchema[fk.foreignTable];
+        if (targetTable) {
+          targetTable.reverseForeignKeys = targetTable.reverseForeignKeys || [];
+          targetTable.reverseForeignKeys.push({
+            referencingTable: tableName,
+            referencingColumn: fk.columnName,
+            referencedColumn: fk.foreignColumn,
+          });
+        }
+      }
+    }
+
     // Store schema in cache
     schemaCache.set(connectionId, normalizedSchema);
+    
+    // DEBUG: Log what was stored
+    const firstNormTable = Object.entries(normalizedSchema)[0];
+    if (firstNormTable) {
+      console.log(`[DEBUG POST /schema NORMALIZED] First table: ${firstNormTable[0]}`, {
+        primaryKeys: firstNormTable[1].primaryKeys,
+      });
+    }
+    
     console.log(`Schema cached for ${connectionId}`, { cachedKeys: Object.keys(normalizedSchema).length });
 
     // Create an APIGenerator for this local database so it has __generated_endpoints

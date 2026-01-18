@@ -14,11 +14,27 @@ const LOCAL_SCHEMA_KEY = 'local_database_schemas';
 
 export const saveLocalSchema = async (connectionId, schema) => {
   try {
-    // Check if schema is already in app format (from convertToAppSchema) or raw SchemaBuilder format
-    if (schema.tables) {
-      // Convert SchemaBuilder format to Schema page format
-      // SchemaBuilder: { tables: [{ name, columns, primaryKey, foreignKeys: [{column, refTable, refColumn}] }] }
-      // Schema page: { tableName: { columns, primaryKeys, foreignKeys: [{columnName, foreignTable, foreignColumn}] } }
+    const hasTablesArray = Array.isArray(schema.tables);
+    const isKeyedFormat = !hasTablesArray && typeof schema === 'object' && Object.keys(schema).length > 0 && 
+                          Object.values(schema)[0]?.columns !== undefined;
+    
+    console.log('[DEBUG saveLocalSchema] Input analysis:', {
+      hasTablesArray,
+      isKeyedFormat,
+      schemaKeys: Object.keys(schema).slice(0, 3),
+      firstTableName: Object.keys(schema)[0],
+      firstTableStructure: Object.values(schema)[0],
+    });
+    
+    let requestPayload;
+    
+    // If it's keyed format (app format from convertToAppSchema), send it directly
+    if (isKeyedFormat) {
+      console.log('[DEBUG saveLocalSchema] Using keyed format path');
+      requestPayload = { schema };
+    } else if (hasTablesArray) {
+      console.log('[DEBUG saveLocalSchema] Using tables array format path');
+      // This is raw SchemaBuilder format with .tables array
       const schemaTables = schema.tables || [];
       const formattedSchema = {};
       
@@ -26,7 +42,6 @@ export const saveLocalSchema = async (connectionId, schema) => {
         formattedSchema[table.name] = {
           columns: table.columns || [],
           primaryKeys: table.primaryKey || [],
-          // Convert FK format from SchemaBuilder to Schema page format
           foreignKeys: (table.foreignKeys || []).map(fk => ({
             columnName: fk.column || fk.columnName,
             foreignTable: fk.refTable || fk.foreignTable,
@@ -37,15 +52,24 @@ export const saveLocalSchema = async (connectionId, schema) => {
           indexes: table.indexes || [],
         };
       });
-      
-      // Save to backend
-      const response = await api.post(`/connections/${connectionId}/schema`, { schema: formattedSchema });
-      return response.data;
+      requestPayload = { schema: formattedSchema };
     } else {
-      // Schema is already in app format (keyed by table name)
-      const response = await api.post(`/connections/${connectionId}/schema`, { schema });
-      return response.data;
+      console.log('[DEBUG saveLocalSchema] Using fallback path');
+      requestPayload = { schema };
     }
+    
+    // Log the exact payload before sending
+    const firstTableInPayload = Object.values(requestPayload.schema || {})[0];
+    console.log('[DEBUG saveLocalSchema] About to send HTTP POST with payload:', {
+      connectionId,
+      schemaTableCount: Object.keys(requestPayload.schema || {}).length,
+      firstTableName: Object.keys(requestPayload.schema || {})[0],
+      firstTablePKs: firstTableInPayload?.primaryKeys,
+      firstTableColumns: firstTableInPayload?.columns?.length,
+    });
+    
+    const response = await api.post(`/connections/${connectionId}/schema`, requestPayload);
+    return response.data;
   } catch (e) {
     console.error('Failed to save schema to backend:', {
       connectionId,

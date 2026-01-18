@@ -833,6 +833,16 @@ const SchemaBuilder = () => {
   };
 
   const tables = activeDb?.tables || [];
+  
+  // DEBUG: Log tables whenever component renders
+  React.useEffect(() => {
+    console.log('[DEBUG RENDER] tables variable updated:', {
+      tablesLength: tables.length,
+      activeDbId: activeDb?.id,
+      firstTablePKs: tables[0]?.primaryKey,
+      allTables: tables.map(t => ({ name: t.name, pkLength: t.primaryKey?.length, hasPKField: 'primaryKey' in t })),
+    });
+  }, [tables]);
 
   const handleSelectDatabase = (db) => {
     setActiveDbIdState(db.id);
@@ -1305,6 +1315,11 @@ const SchemaBuilder = () => {
             showToast(`Imported ${result.tables} table(s), inserted ${result.totalRows} row(s)`, 'success');
             // Refresh schema from backend and reflect in builder state
             const backendSchema = await getSchema(connId).catch(() => null);
+            console.log('[DEBUG POST IMPORT] backendSchema received:', {
+              type: typeof backendSchema,
+              keys: backendSchema ? Object.keys(backendSchema) : null,
+              firstTableRaw: backendSchema ? Object.values(backendSchema)[0] : null,
+            });
             if (backendSchema && typeof backendSchema === 'object') {
               const newTables = Object.entries(backendSchema).map(([name, t]) => ({
                 name,
@@ -1313,7 +1328,30 @@ const SchemaBuilder = () => {
                 foreignKeys: (t.foreignKeys || []).map(fk => ({ column: fk.columnName, refTable: fk.foreignTable, refColumn: fk.foreignColumn })),
                 indexes: t.indexes || [],
               }));
-              setDatabases(prev => prev.map(db => db.id === activeDb.id ? { ...db, tables: newTables } : db));
+              console.log('[DEBUG POST IMPORT] newTables to set:', {
+                count: newTables.length,
+                firstTable: newTables[0],
+              });
+              setDatabases(prev => {
+                const updated = prev.map(db => db.id === activeDb.id ? { ...db, tables: newTables } : db);
+                console.log('[DEBUG POST IMPORT] Updated databases:', {
+                  dbCount: updated.length,
+                  targetDbId: activeDb.id,
+                  foundDb: updated.find(d => d.id === activeDb.id),
+                });
+                return updated;
+              });
+              
+              // Save the updated schema with primaryKeys to backend via POST /schema
+              const appSchema = convertToAppSchema(newTables);
+              console.log('[DEBUG POST IMPORT] About to save appSchema:', {
+                tableCount: Object.keys(appSchema).length,
+                firstTablePKs: appSchema[Object.keys(appSchema)[0]]?.primaryKeys,
+                appSchemaKeys: Object.keys(appSchema),
+                appSchemaFull: appSchema,
+              });
+              await saveLocalSchema(connId, appSchema);
+              console.log('[DEBUG POST IMPORT] saveLocalSchema completed');
             }
             event.target.value = '';
             // Ensure this connection is active in the app so data shows up in Schema UI
@@ -1492,6 +1530,18 @@ const SchemaBuilder = () => {
 
   // Convert local schema to the format used by the rest of the app
   const convertToAppSchema = (localTables) => {
+    console.log('[DEBUG convertToAppSchema] Input tables:', {
+      count: localTables.length,
+      firstTableFull: localTables[0],
+      allTables: localTables.map(t => ({
+        name: t.name,
+        hasPrimaryKey: 'primaryKey' in t,
+        primaryKeyValue: t.primaryKey,
+        primaryKeyType: typeof t.primaryKey,
+        columns: t.columns?.map(c => c.name),
+      })),
+    });
+    
     const schema = {};
     
     localTables.forEach(table => {
@@ -1525,15 +1575,34 @@ const SchemaBuilder = () => {
       };
     });
     
+    console.log('[DEBUG convertToAppSchema] Output schema:', {
+      tableNames: Object.keys(schema),
+      firstTableFull: schema[localTables[0]?.name],
+    });
+    
     return schema;
   };
 
   // Use this database in the rest of the app (Schema, ER Diagram, APIs, etc.)
   const handleUseInApp = () => {
+    console.log('[DEBUG handleUseInApp] CALLED with:', {
+      activeDbId: activeDbId,
+      activeDbIdState: activeDbIdState,
+      activeDatabaseObject: activeDb,
+      tablesLength: tables.length,
+      tablesFirst: tables[0],
+    });
+    
     if (!activeDb || tables.length === 0) {
       showToast('Create at least one table first', 'warning');
       return;
     }
+    
+    console.log('[DEBUG handleUseInApp] activeDb.tables:', {
+      count: activeDb.tables?.length,
+      firstTablePKs: activeDb.tables?.[0]?.primaryKey,
+      tables: tables.map(t => ({ name: t.name, pkLength: t.primaryKey?.length })),
+    });
     
     const dbName = activeDb.name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
     // Use existing connectionId if already set (from auto-connect), otherwise create new one
