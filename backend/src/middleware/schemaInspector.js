@@ -53,21 +53,6 @@ class SchemaInspector {
       `;
       const result = await this.pool.query(query);
       return result.rows;
-    } else if (this.dialect === 'oracle') {
-      const conn = await this.pool.getConnection();
-      try {
-        const result = await conn.execute(
-          `SELECT table_name FROM user_tables ORDER BY table_name`,
-          [],
-          { outFormat: require('oracledb').OUT_FORMAT_OBJECT }
-        );
-        return result.rows.map(r => ({ table_name: r.TABLE_NAME }));
-      } finally {
-        try { await conn.close(); } catch (e) {}
-      }
-    } else if (this.dialect === 'mongodb') {
-      const cols = await this.pool.db.listCollections().toArray();
-      return cols.map(c => ({ table_name: c.name }));
     } else {
       const sql = `
         SELECT table_name
@@ -81,17 +66,7 @@ class SchemaInspector {
     }
   }
 
-  /**
-   * Helper to get a JS type name for Mongo values
-   */
-  _mongoType(val) {
-    if (val === null) return 'null';
-    if (Array.isArray(val)) return 'array';
-    if (val && val._bsontype) return val._bsontype.toLowerCase();
-    const t = typeof val;
-    if (t === 'object') return 'object';
-    return t;
-  }
+
 
   /**
    * Get columns/fields for a specific table/collection
@@ -166,51 +141,6 @@ class SchemaInspector {
         udtName: enumTypeMap[col.column_name] || (col.data_type === 'USER-DEFINED' ? col.udt_name : undefined),
         isAutoIncrement: autoIncCols.has(col.column_name),
       }));
-    } else if (this.dialect === 'oracle') {
-      const conn = await this.pool.getConnection();
-      try {
-        const sql = `
-          SELECT column_name, data_type, nullable, data_default, data_length, data_precision, data_scale
-          FROM user_tab_columns
-          WHERE table_name = :t
-          ORDER BY column_id`;
-        const result = await conn.execute(sql, [tableName.toUpperCase()], { outFormat: require('oracledb').OUT_FORMAT_OBJECT });
-        return result.rows.map(r => ({
-          name: r.COLUMN_NAME,
-          type: r.DATA_TYPE,
-          nullable: r.NULLABLE === 'Y',
-          default: r.DATA_DEFAULT,
-          maxLength: r.DATA_LENGTH,
-          precision: r.DATA_PRECISION,
-          scale: r.DATA_SCALE,
-        }));
-      } finally {
-        try { await conn.close(); } catch (e) {}
-      }
-    } else if (this.dialect === 'mongodb') {
-      const coll = this.pool.db.collection(tableName);
-      const docs = await coll.find({}).limit(50).toArray();
-      const fieldInfo = {}; // name -> { types: Set, presentCount }
-      for (const doc of docs) {
-        for (const key of Object.keys(doc)) {
-          const val = doc[key];
-          if (!fieldInfo[key]) fieldInfo[key] = { types: new Set(), present: 0 };
-          fieldInfo[key].types.add(this._mongoType(val));
-          fieldInfo[key].present++;
-        }
-      }
-      const total = docs.length || 1;
-      const columns = Object.entries(fieldInfo).map(([name, info]) => ({
-        name,
-        type: Array.from(info.types).sort().join('|'),
-        nullable: info.present < total,
-        samplePresentPercent: Math.round((info.present / total) * 100),
-      }));
-      // Ensure _id is present as primary key
-      if (!columns.find(c => c.name === '_id')) {
-        columns.unshift({ name: '_id', type: 'objectid', nullable: false, samplePresentPercent: 100 });
-      }
-      return columns;
     } else {
       const sql = `
         SELECT
@@ -281,24 +211,6 @@ class SchemaInspector {
       `;
       const result = await this.pool.query(query, [tableName]);
       return result.rows.map(row => row.column_name);
-    } else if (this.dialect === 'oracle') {
-      const conn = await this.pool.getConnection();
-      try {
-        const sql = `
-          SELECT cols.column_name
-          FROM all_constraints cons
-          JOIN all_cons_columns cols ON cons.constraint_name = cols.constraint_name AND cons.owner = cols.owner
-          WHERE cons.constraint_type = 'P'
-          AND cons.table_name = :t
-          AND cons.owner = USER`;
-        const res = await conn.execute(sql, [tableName.toUpperCase()], { outFormat: require('oracledb').OUT_FORMAT_OBJECT });
-        return res.rows.map(r => r.COLUMN_NAME);
-      } finally {
-        try { await conn.close(); } catch (e) {}
-      }
-    } else if (this.dialect === 'mongodb') {
-      // MongoDB primary key is _id
-      return ['_id'];
     } else {
       const sql = `
         SELECT k.COLUMN_NAME AS column_name
@@ -349,42 +261,6 @@ class SchemaInspector {
         foreignColumn: row.foreign_column_name,
         constraintName: row.constraint_name,
       }));
-    } else if (this.dialect === 'oracle') {
-      const conn = await this.pool.getConnection();
-      try {
-        const sql = `
-          SELECT k.column_name, r.table_name AS foreign_table_name, rcol.column_name AS foreign_column_name, k.constraint_name
-          FROM all_constraints cons
-          JOIN all_cons_columns k ON cons.constraint_name = k.constraint_name AND cons.owner = k.owner
-          JOIN all_constraints r ON cons.r_constraint_name = r.constraint_name AND cons.owner = r.owner
-          JOIN all_cons_columns rcol ON r.constraint_name = rcol.constraint_name AND r.owner = rcol.owner
-          WHERE cons.constraint_type = 'R' AND cons.table_name = :t AND cons.owner = USER`;
-        const res = await conn.execute(sql, [tableName.toUpperCase()], { outFormat: require('oracledb').OUT_FORMAT_OBJECT });
-        return res.rows.map(r => ({
-          columnName: r.COLUMN_NAME,
-          foreignTable: r.FOREIGN_TABLE_NAME,
-          foreignColumn: r.FOREIGN_COLUMN_NAME,
-          constraintName: r.CONSTRAINT_NAME,
-        }));
-      } finally {
-        try { await conn.close(); } catch (e) {}
-      }
-    } else if (this.dialect === 'mongodb') {
-      // Heuristic: fields that end with _id and contain objectId values
-      const coll = this.pool.db.collection(tableName);
-      const doc = await coll.findOne({});
-      if (!doc) return [];
-      const fks = [];
-      for (const key of Object.keys(doc)) {
-        if (key.endsWith('_id')) {
-          const val = doc[key];
-          const isObjectId = val && (val._bsontype === 'objectid' || val.constructor?.name?.toLowerCase() === 'objectid');
-          if (isObjectId) {
-            fks.push({ columnName: key, foreignTable: key.replace(/_id$/, ''), foreignColumn: '_id', constraintName: null });
-          }
-        }
-      }
-      return fks;
     } else {
       const sql = `
         SELECT
@@ -439,37 +315,6 @@ class SchemaInspector {
         referencedColumn: row.referenced_column,
         constraintName: row.constraint_name,
       }));
-    } else if (this.dialect === 'oracle') {
-      const conn = await this.pool.getConnection();
-      try {
-        const sql = `
-          SELECT a.table_name AS referencing_table, a.column_name AS referencing_column, c.column_name AS referenced_column, a.constraint_name
-          FROM all_cons_columns a
-          JOIN all_constraints b ON a.owner = b.owner AND a.constraint_name = b.constraint_name
-          JOIN all_cons_columns c ON b.r_owner = c.owner AND b.r_constraint_name = c.constraint_name
-          WHERE b.constraint_type = 'R' AND c.table_name = :t AND b.owner = USER`;
-        const res = await conn.execute(sql, [tableName.toUpperCase()], { outFormat: require('oracledb').OUT_FORMAT_OBJECT });
-        return res.rows.map(r => ({
-          referencingTable: r.REFERENCING_TABLE,
-          referencingColumn: r.REFERENCING_COLUMN,
-          referencedColumn: r.REFERENCED_COLUMN,
-          constraintName: r.CONSTRAINT_NAME,
-        }));
-      } finally {
-        try { await conn.close(); } catch (e) {}
-      }
-    } else if (this.dialect === 'mongodb') {
-      // Heuristic: search a few collections for fields referencing this collection (ending with _id)
-      const all = await this.pool.db.listCollections().toArray();
-      const refs = [];
-      for (const c of all) {
-        const coll = this.pool.db.collection(c.name);
-        const doc = await coll.findOne({ [ `${tableName.replace(/s$/, '')}_id` ]: { $exists: true } });
-        if (doc) {
-          refs.push({ referencingTable: c.name, referencingColumn: `${tableName.replace(/s$/, '')}_id`, referencedColumn: '_id', constraintName: null });
-        }
-      }
-      return refs;
     } else {
       const sql = `
         SELECT

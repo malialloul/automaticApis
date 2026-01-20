@@ -38,13 +38,9 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
   const encrypt = watch('encrypt');
 
   useEffect(() => {
-    const portMap = { postgres: 5432, mysql: 3306, mongodb: 27017, mssql: 1433, oracle: 1521 };
+    const portMap = { postgres: 5432, mysql: 3306 };
     setValue('port', portMap[type] || 5432);
-    // clear auth for MongoDB by default
-    if (type === 'mongodb') {
-      setValue('user', '');
-      setValue('password', '');
-    }
+
   }, [type, setValue]);
 
   const [testing, setTesting] = useState(false);
@@ -136,9 +132,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
               >
                 <MenuItem value="postgres">PostgreSQL</MenuItem>
                 <MenuItem value="mysql">MySQL</MenuItem>
-                {/* <MenuItem value="mongodb">MongoDB</MenuItem>
-                <MenuItem value="mssql">MS SQL Server</MenuItem>
-                <MenuItem value="oracle">Oracle</MenuItem> */}
+
               </Select>
 
               {/* Derived validation flags */}
@@ -155,23 +149,13 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
           </Grid>
 
 
-          {/* MongoDB URI (optional) */}
-          {type === 'mongodb' && (
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="MongoDB URI (optional)"
-                {...register('uri')}
-                helperText="e.g., mongodb://user:pass@host:27017/dbname"
-              />
-            </Grid>
-          )}
+
 
           <Grid item xs={12} md={8}>
             <TextField
               fullWidth
               label="Host"
-              {...register('host', { required: !(type === 'mongodb' && uri) ? 'Host is required' : false })}
+              {...register('host', { required: !(uri) ? 'Host is required' : false })}
               error={!!errors.host}
               helperText={errors.host?.message}
             />
@@ -192,7 +176,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
             <TextField
               fullWidth
               label="Database"
-              {...register('database', { required: !(type === 'mongodb' && uri) ? 'Database is required' : false })}
+              {...register('database', { required: !(uri) ? 'Database is required' : false })}
               error={!!errors.database}
               helperText={errors.database?.message}
             />
@@ -202,7 +186,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
             <TextField
               fullWidth
               label="User"
-              {...register('user', { required: type !== 'mongodb' ? 'User is required' : false })}
+              {...register('user', { required: 'User is required' })}
               error={!!errors.user}
               helperText={errors.user?.message}
             />
@@ -213,7 +197,7 @@ const ConnectionForm = ({ onConnectionSaved, onSchemaLoaded }) => {
               fullWidth
               label="Password"
               type="password"
-              {...register('password', { required: type !== 'mongodb' ? 'Password is required' : false })}
+              {...register('password', { required: 'Password is required' })}
               error={!!errors.password}
               helperText={errors.password?.message}
             />

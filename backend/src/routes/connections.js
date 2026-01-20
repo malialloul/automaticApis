@@ -24,9 +24,7 @@ function getDefaultPort(type) {
   const t = (type || 'postgres').toLowerCase();
   if (t === 'postgres') return 5432;
   if (t === 'mysql') return 3306;
-  if (t === 'mssql') return 1433;
-  if (t === 'oracle') return 1521;
-  if (t === 'mongodb') return 27017;
+
   return 5432;
 }
 
@@ -38,20 +36,11 @@ router.post('/test', async (req, res) => {
   try {
     const { host, port, database, user, password, type, uri, encrypt } = req.body;
 
-    // For MongoDB: either provide a URI or host + database; user/password are optional
-    if ((type || 'postgres').toLowerCase() === 'mongodb') {
-      if (!uri && !host) {
-        return res.status(400).json({ error: 'Missing required fields: host or uri' });
-      }
-      if (!uri && !database) {
-        return res.status(400).json({ error: 'Missing required fields: database' });
-      }
-    } else {
-      if (!host || !database || !user || !password) {
-        return res.status(400).json({
-          error: 'Missing required fields: host, database, user, password'
-        });
-      }
+
+    if (!host || !database || !user || !password) {
+      return res.status(400).json({
+        error: 'Missing required fields: host, database, user, password'
+      });
     }
 
     const result = await connectionManager.testConnection({
@@ -65,7 +54,6 @@ router.post('/test', async (req, res) => {
       encrypt,
     });
 
-    // Include any additional info returned by the driver (e.g., MongoDB ping result)
     res.json({
       success: true,
       message: 'Connection successful',
@@ -120,19 +108,10 @@ router.post('/:id/introspect', async (req, res) => {
       });
     }
 
-    if ((type || 'postgres').toLowerCase() === 'mongodb') {
-      if (!uri && !host) {
-        return res.status(400).json({ error: 'Missing required fields: host or uri' });
-      }
-      if (!uri && !database) {
-        return res.status(400).json({ error: 'Missing required fields: database' });
-      }
-    } else {
-      if (!host || !database || !user || !password) {
-        return res.status(400).json({
-          error: 'Missing required fields: host, database, user, password'
-        });
-      }
+    if (!host || !database || !user || !password) {
+      return res.status(400).json({
+        error: 'Missing required fields: host, database, user, password'
+      });
     }
 
     // Get or create connection pool
@@ -165,7 +144,7 @@ router.post('/:id/introspect', async (req, res) => {
     // Persist generated cross-table endpoints into the simple endpoints store so UI can show them
     try {
       const endpointsModule = require('./endpoints');
-      const generated = apiGenerator._generatedCrossTableEndpoints || [];
+      const generated = [];
       generated.forEach((g, idx) => {
         try {
           // Build a friendly name and graph for the generated endpoint
@@ -247,20 +226,20 @@ router.post('/:id/schema', (req, res) => {
       tablesType: typeof tables,
       tablesLength: Array.isArray(tables) ? tables.length : 'not an array'
     });
-    
+
     // DEBUG: Log the actual schema object structure
     console.log('[DEBUG POST /schema RAW REQUEST] req.body:', {
       hasSchema: !!schema,
       schemaPropNames: schema ? Object.keys(schema).slice(0, 3) : null,
     });
-    
+
     if (schema && typeof schema === 'object') {
       const firstTableName = Object.keys(schema)[0];
       if (firstTableName) {
         console.log(`[DEBUG POST /schema RAW] First table "${firstTableName}":`, schema[firstTableName]);
       }
     }
-    
+
     // DEBUG: Log first table's primaryKeys from incoming schema
     if (schema && typeof schema === 'object') {
       const firstTable = Object.entries(schema)[0];
@@ -281,7 +260,7 @@ router.post('/:id/schema', (req, res) => {
       dataToStore = {};
       for (const t of tables) {
         if (!t || !t.name) continue;
-        const primaryKeys = (t.primaryKeys || t.primaryKey || []).map(pk => 
+        const primaryKeys = (t.primaryKeys || t.primaryKey || []).map(pk =>
           typeof pk === 'string' ? pk.trim() : pk
         ).filter(Boolean);
         dataToStore[t.name] = {
@@ -309,10 +288,10 @@ router.post('/:id/schema', (req, res) => {
       if (!n || typeof n !== 'string') return n;
       // Trim whitespace and strip surrounding quotes/backticks/brackets
       let s = n.trim();
-      s = s.replace(/^"(.+)"$/,'$1');
-      s = s.replace(/^'(.*)'$/,'$1');
-      s = s.replace(/^`(.*)`$/,'$1');
-      s = s.replace(/^\[(.*)\]$/,'$1');
+      s = s.replace(/^"(.+)"$/, '$1');
+      s = s.replace(/^'(.*)'$/, '$1');
+      s = s.replace(/^`(.*)`$/, '$1');
+      s = s.replace(/^\[(.*)\]$/, '$1');
       return s;
     };
 
@@ -337,7 +316,7 @@ router.post('/:id/schema', (req, res) => {
       } else {
         primaryKeys = [];
       }
-      
+
       // FALLBACK: If primaryKeys array is empty but columns have isPrimaryKey flag, extract from there
       if (primaryKeys.length === 0 && Array.isArray(tableData.columns)) {
         const colsWithPK = tableData.columns.filter(col => col.isPrimaryKey);
@@ -381,7 +360,7 @@ router.post('/:id/schema', (req, res) => {
 
     // Store schema in cache
     schemaCache.set(connectionId, normalizedSchema);
-    
+
     // DEBUG: Log what was stored
     const firstNormTable = Object.entries(normalizedSchema)[0];
     if (firstNormTable) {
@@ -389,7 +368,7 @@ router.post('/:id/schema', (req, res) => {
         primaryKeys: firstNormTable[1].primaryKeys,
       });
     }
-    
+
     console.log(`Schema cached for ${connectionId}`, { cachedKeys: Object.keys(normalizedSchema).length });
 
     // Create an APIGenerator for this local database so it has __generated_endpoints
@@ -576,84 +555,84 @@ router.post('/:id/import-sql', async (req, res) => {
     };
 
     // Helper: normalize CREATE TABLE to app schema format
-   const upsertTableSchema = (stmt) => {
-  const tableName = stmt.table?.[0]?.table;
-  if (!tableName) return;
+    const upsertTableSchema = (stmt) => {
+      const tableName = stmt.table?.[0]?.table;
+      if (!tableName) return;
 
-  const columns = [];
-  const primaryKeys = [];
-  const foreignKeys = [];
+      const columns = [];
+      const primaryKeys = [];
+      const foreignKeys = [];
 
-  const safeValue = (v) => {
-    if (v === null || v === undefined) return null;
-    if (typeof v === 'string' || typeof v === 'number') return v;
-    return JSON.stringify(v);
-  };
+      const safeValue = (v) => {
+        if (v === null || v === undefined) return null;
+        if (typeof v === 'string' || typeof v === 'number') return v;
+        return JSON.stringify(v);
+      };
 
-  const normalizeDefault = (dv) => {
-    if (!dv) return null;
-    if (typeof dv === 'string' || typeof dv === 'number') return dv;
-    if (dv.type === 'function') return dv.name;
-    if (dv.type === 'number') return dv.value;
-    if (dv.type === 'string') return dv.value;
-    return JSON.stringify(dv);
-  };
+      const normalizeDefault = (dv) => {
+        if (!dv) return null;
+        if (typeof dv === 'string' || typeof dv === 'number') return dv;
+        if (dv.type === 'function') return dv.name;
+        if (dv.type === 'number') return dv.value;
+        if (dv.type === 'string') return dv.value;
+        return JSON.stringify(dv);
+      };
 
-  (stmt.create_definitions || []).forEach(def => {
+      (stmt.create_definitions || []).forEach(def => {
 
-    /* ---------- COLUMNS ---------- */
-    if (def.resource === 'column') {
-      const name = def.column?.column;
-      const dt = def.definition?.dataType || '';
-      const nullable = def.nullable?.type !== 'not null';
-      const unique = def.unique === 'unique';
+        /* ---------- COLUMNS ---------- */
+        if (def.resource === 'column') {
+          const name = def.column?.column;
+          const dt = def.definition?.dataType || '';
+          const nullable = def.nullable?.type !== 'not null';
+          const unique = def.unique === 'unique';
 
-      if (def.primary_key === 'primary key') {
-        if (!primaryKeys.includes(name)) primaryKeys.push(name);
-      }
+          if (def.primary_key === 'primary key') {
+            if (!primaryKeys.includes(name)) primaryKeys.push(name);
+          }
 
-      const isAuto =
-        /\bserial\b|\bbigserial\b/i.test(String(dt)) ||
-        /nextval\(/i.test(String(def.definition?.default_val || ''));
+          const isAuto =
+            /\bserial\b|\bbigserial\b/i.test(String(dt)) ||
+            /nextval\(/i.test(String(def.definition?.default_val || ''));
 
-      const defVal = normalizeDefault(def.default_val?.value);
+          const defVal = normalizeDefault(def.default_val?.value);
 
-      columns.push({
-        name: safeValue(name),
-        type: safeValue(String(dt).toLowerCase()),
-        nullable,
-        unique,
-        default: safeValue(defVal),
-        isAutoIncrement: isAuto,
-        isPrimaryKey: def.primary_key === 'primary key'
+          columns.push({
+            name: safeValue(name),
+            type: safeValue(String(dt).toLowerCase()),
+            nullable,
+            unique,
+            default: safeValue(defVal),
+            isAutoIncrement: isAuto,
+            isPrimaryKey: def.primary_key === 'primary key'
+          });
+        }
+
+        /* ---------- FOREIGN KEYS ---------- */
+        if (def.resource === 'constraint' && def.constraint_type === 'FOREIGN KEY') {
+          const fkCols = def.definition || [];
+          const refDef = def.reference_definition;
+
+          const refTable = refDef?.table?.[0]?.table;
+          const refCols = refDef?.definition || [];
+
+          fkCols.forEach((col, i) => {
+            foreignKeys.push({
+              columnName: safeValue(col.column),
+              foreignTable: safeValue(refTable),
+              foreignColumn: safeValue(refCols[i]?.column || refCols[0]?.column || 'id'),
+            });
+          });
+        }
       });
-    }
-
-    /* ---------- FOREIGN KEYS ---------- */
-    if (def.resource === 'constraint' && def.constraint_type === 'FOREIGN KEY') {
-      const fkCols = def.definition || [];
-      const refDef = def.reference_definition;
-
-      const refTable = refDef?.table?.[0]?.table;
-      const refCols = refDef?.definition || [];
-
-      fkCols.forEach((col, i) => {
-        foreignKeys.push({
-          columnName: safeValue(col.column),
-          foreignTable: safeValue(refTable),
-          foreignColumn: safeValue(refCols[i]?.column || refCols[0]?.column || 'id'),
-        });
-      });
-    }
-  });
-//
-  newSchema[tableName] = {
-    columns,
-    primaryKeys,
-    foreignKeys,
-    indexes: newSchema[tableName]?.indexes || []
-  };
-};
+      //
+      newSchema[tableName] = {
+        columns,
+        primaryKeys,
+        foreignKeys,
+        indexes: newSchema[tableName]?.indexes || []
+      };
+    };
 
 
 
@@ -916,30 +895,6 @@ router.get('/:id/swagger', (req, res) => {
 
   res.json(spec);
 });
-
-/**
- * GET /api/connections/:id/debug-generated-routes
- * Return diagnostics collected during route generation (generated and skipped cross-table endpoints)
- */
-router.get('/:id/debug-generated-routes', (req, res) => {
-  const connectionId = req.params.id;
-  const generator = apiGenerators.get(connectionId);
-  const schema = schemaCache.get(connectionId);
-  const hasRoutes = apiRouters.has(connectionId);
-
-  if (!generator) {
-    return res.status(404).json({ error: 'No generator found for this connection. Please introspect the database first.' });
-  }
-
-  res.json({
-    connectionId,
-    hasRoutes,
-    hasSchema: !!schema,
-    generated: generator._generatedCrossTableEndpoints || [],
-    skipped: generator._skippedCrossTableEndpoints || []
-  });
-});
-
 /**
  * DELETE /api/connections/:id
  * Close and remove a connection

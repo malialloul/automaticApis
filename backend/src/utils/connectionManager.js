@@ -1,8 +1,5 @@
 const { Pool } = require('pg');
 const mysql = require('mysql2/promise');
-const { MongoClient } = require('mongodb');
-const mssql = require('mssql');
-const oracledb = require('oracledb');
 
 /**
  * ConnectionManager - Manages PostgreSQL connection pools for multiple databases
@@ -65,56 +62,6 @@ class ConnectionManager {
         await pool.end();
         throw error;
       }
-    } else if (type === 'mongodb') {
-      const uri = config.uri || `mongodb://${config.host}:${config.port || 27017}`;
-      const client = new MongoClient(uri);
-      try {
-        await client.connect();
-        // If a database is not provided, default to 'admin'
-        const db = client.db(config.database || 'admin');
-        this.connections.set(connectionId, { type, client, db, database: config.database || 'admin' });
-        return { client, db };
-      } catch (error) {
-        await client.close();
-        throw error;
-      }
-    } else if (type === 'mssql') {
-      const pool = await new mssql.ConnectionPool({
-        user: config.user,
-        password: config.password,
-        server: config.host,
-        port: config.port || 1433,
-        database: config.database,
-        options: { encrypt: config.encrypt || false, trustServerCertificate: true },
-      }).connect();
-      try {
-        // simple test query
-        const result = await pool.request().query('SELECT 1 AS now');
-        this.connections.set(connectionId, { type, pool, database: config.database });
-        return pool;
-      } catch (error) {
-        await pool.close();
-        throw error;
-      }
-    } else if (type === 'oracle') {
-      // requires Oracle Instant Client to be available in the environment for oracledb
-      const pool = await oracledb.createPool({
-        user: config.user,
-        password: config.password,
-        connectString: `${config.host}:${config.port || 1521}/${config.database}`,
-        poolMin: 0,
-        poolMax: 10,
-        poolIncrement: 1,
-      });
-      try {
-        const connection = await pool.getConnection();
-        await connection.close();
-        this.connections.set(connectionId, { type, pool, database: config.database });
-        return pool;
-      } catch (error) {
-        await pool.close();
-        throw error;
-      }
     } else {
       throw new Error(`Unsupported database type: ${type}`);
     }
@@ -165,55 +112,6 @@ class ConnectionManager {
         await pool.end();
         throw error;
       }
-    } else if (type === 'mongodb') {
-      const uri = config.uri || `mongodb://${config.host}:${config.port || 27017}`;
-      const client = new MongoClient(uri);
-      try {
-        await client.connect();
-        const admin = client.db(config.database || 'admin').admin();
-        const ping = await admin.ping();
-        await client.close();
-        return { success: true, info: ping };
-      } catch (error) {
-        await client.close();
-        throw error;
-      }
-    } else if (type === 'mssql') {
-      const pool = await new mssql.ConnectionPool({
-        user: config.user,
-        password: config.password,
-        server: config.host,
-        port: config.port || 1433,
-        database: config.database,
-        options: { encrypt: config.encrypt || false, trustServerCertificate: true },
-      }).connect();
-      try {
-        const result = await pool.request().query('SELECT 1 AS now');
-        await pool.close();
-        return { success: true, timestamp: result.recordset[0].now };
-      } catch (error) {
-        await pool.close();
-        throw error;
-      }
-    } else if (type === 'oracle') {
-      const pool = await oracledb.createPool({
-        user: config.user,
-        password: config.password,
-        connectString: `${config.host}:${config.port || 1521}/${config.database}`,
-        poolMin: 0,
-        poolMax: 1,
-        poolIncrement: 1,
-      });
-      try {
-        const connection = await pool.getConnection();
-        const result = await connection.execute('SELECT 1 FROM DUAL');
-        await connection.close();
-        await pool.close();
-        return { success: true, timestamp: result.rows[0][0] };
-      } catch (error) {
-        await pool.close();
-        throw error;
-      }
     } else {
       throw new Error(`Unsupported database type: ${type}`);
     }
@@ -227,15 +125,8 @@ class ConnectionManager {
     const info = this.connections.get(connectionId);
     if (info) {
       try {
-        if (info.type === 'postgres' || info.type === 'mysql') {
-          await info.pool.end();
-        } else if (info.type === 'mssql') {
-          await info.pool.close();
-        } else if (info.type === 'oracle') {
-          await info.pool.close();
-        } else if (info.type === 'mongodb') {
-          await info.client.close();
-        }
+        await info.pool.end();
+
       } catch (err) {
         // ignore close errors
       }
@@ -249,15 +140,8 @@ class ConnectionManager {
   async closeAll() {
     for (const [connectionId, info] of this.connections.entries()) {
       try {
-        if (info.type === 'postgres' || info.type === 'mysql') {
-          await info.pool.end();
-        } else if (info.type === 'mssql') {
-          await info.pool.close();
-        } else if (info.type === 'oracle') {
-          await info.pool.close();
-        } else if (info.type === 'mongodb') {
-          await info.client.close();
-        }
+        await info.pool.end();
+
       } catch (err) {
         // ignore
       }
@@ -285,10 +169,6 @@ class ConnectionManager {
   getExistingConnection(connectionId) {
     const info = this.connections.get(connectionId);
     if (!info) return null;
-    
-    if (info.type === 'mongodb') {
-      return { client: info.client, db: info.db };
-    }
     return info.pool;
   }
 }
