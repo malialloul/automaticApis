@@ -816,7 +816,7 @@ router.post('/:id/import-sql', async (req, res) => {
       const summary = Object.fromEntries(Object.entries(connData).map(([t, rows]) => [t, rows.length]));
       console.log(`[IMPORT-SQL] Summary for ${connectionId}: tables=${totalTables}, insertedRows=${totalRows}, updatedRows=${totalUpdated}, dataStoreCounts=`, summary);
     } catch { }
-    return res.json({ success: true, connectionId, tables: totalTables, inserted: insertedCounts, totalRows, updated: updatedCounts, totalUpdated, parseErrors });
+    return res.json({ success: true, connectionId, schema: newSchema, tables: totalTables, inserted: insertedCounts, totalRows, updated: updatedCounts, totalUpdated, parseErrors });
   } catch (error) {
     console.error('Failed to import SQL:', error);
     return res.status(500).json({ error: error.message });
@@ -1231,7 +1231,7 @@ router.post('/:id/execute', async (req, res) => {
         }
 
         const insertSql = `INSERT INTO ${tableQb.sanitizeIdentifier(table)} (${columns.map(c => tableQb.sanitizeIdentifier(c)).join(', ')}) VALUES (${placeholders.join(', ')})`;
-        const insertParams = [...tableQb.params];
+        const insertParams = [...tableQb.getParams()];
 
         if (dialect === 'mysql') {
           const [rows] = await pool.query(insertSql, insertParams);
@@ -1443,7 +1443,7 @@ router.post('/:id/execute', async (req, res) => {
 
           let sql;
           // Parameter offset for WHERE placeholders (Postgres numbered params)
-          const paramOffset = tableQb.params.length;
+          const paramOffset = tableQb.getParams().length;
           const renumberPlaceholders = (s) => {
             if (!s || dialect === 'mysql') return s;
             return s.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + paramOffset}`);
@@ -1507,15 +1507,15 @@ router.post('/:id/execute', async (req, res) => {
           if (sql) {
             if (dialect === 'mysql') {
               // MySQL uses '?' so params are simply concatenated
-              const [rows] = await pool.query(sql, [...tableQb.params, ...qb.params]);
+              const [rows] = await pool.query(sql, [...tableQb.getParams(), ...qb.getParams()]);
               results.push({ table, affectedRows: rows.affectedRows });
             } else {
               try {
                 // Postgres numbered params: combine SET params then WHERE params (renumbered above)
-                const pgResult = await pool.query(sql, [...tableQb.params, ...qb.params]);
+                const pgResult = await pool.query(sql, [...tableQb.getParams(), ...qb.getParams()]);
                 results.push({ table, affectedRows: pgResult.rowCount });
               } catch (e) {
-                return res.status(400).json({ error: e.message, sql, params: [...tableQb.params, ...qb.params] });
+                return res.status(400).json({ error: e.message, sql, params: [...tableQb.getParams(), ...qb.getParams()] });
               }
             }
           }
@@ -1575,7 +1575,7 @@ router.post('/:id/execute', async (req, res) => {
       }
     }
 
-    const params = qb.params;
+    const params = qb.getParams();
 
     // Execute the query
     let result;
@@ -2267,19 +2267,19 @@ router.post('/:id/preview', async (req, res) => {
       const pool = await connectionManager.getConnection(connectionId);
       let rows;
       if (dialect === 'mysql') {
-        const [mysqlRows] = await pool.query(sql, qb.params);
+        const [mysqlRows] = await pool.query(sql, qb.getParams());
         rows = mysqlRows;
       } else {
-        const result = await pool.query(sql, qb.params);
+        const result = await pool.query(sql, qb.getParams());
         rows = result.rows ?? result[0] ?? [];
       }
       const columns = rows[0] ? Object.keys(rows[0]) : (typeof selectColumnNames !== 'undefined' && selectColumnNames.length > 0 ? selectColumnNames : selects.map(s => s));
       const friendlySummary = summaryParts.join(' ; ');
       // Return SQL for debugging/preview (safe to show to authorized users in this app)
-      return res.json({ columns, rows, sql, params: qb.params, summary: friendlySummary });
+      return res.json({ columns, rows, sql, params: qb.getParams(), summary: friendlySummary });
     } catch (err) {
       console.error('Preview SQL failed', err, sql);
-      return res.status(500).json({ error: 'Preview failed to execute query', details: String(err.message), sql: sql, params: qb.params });
+      return res.status(500).json({ error: 'Preview failed to execute query', details: String(err.message), sql: sql, params: qb.getParams() });
     }
   } catch (error) {
     console.error('Preview error:', error);

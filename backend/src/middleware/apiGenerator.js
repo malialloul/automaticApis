@@ -431,7 +431,7 @@ class APIGenerator {
         if (this.dialect === 'postgres') {
           qtext += ' RETURNING *';
         }
-        const result = await this.pool.query(qtext, qb.params);
+        const result = await this.pool.query(qtext, qb.getParams());
         const rows = result.rows ?? result[0];
 
         // For MySQL, rows will be affected count info, not actual data
